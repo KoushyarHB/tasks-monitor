@@ -394,7 +394,7 @@ class Browser:
         if desc:
             from .rich_text import html_to_telegram
             desc_tg = html_to_telegram(desc)
-            lines += ["", "<b>📝 Description</b>", f"{desc_tg}"]
+            lines += ["", "<b>📝 Description</b>", "", f"{desc_tg}"]
 
         url = (f"{self.settings.plane_base_url}/{self.settings.plane_workspace}"
                f"/projects/{self.settings.plane_project_id}/issues/{issue_id}/")
