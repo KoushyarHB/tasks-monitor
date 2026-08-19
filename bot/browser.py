@@ -361,7 +361,6 @@ class Browser:
             desc = (full.get("description_html") or full.get("description_stripped") or "").strip()
         except Exception:
             desc = ""
-
         lines = [
             f"{mine}<b>[{seq}]</b> {esc(name)}",
             "",
@@ -392,11 +391,9 @@ class Browser:
         if cb:
             lines.append(f"      ✍️ {esc(members.get(str(cb), str(cb)))}")
         if desc:
-            # strip HTML tags for a readable pop-up
-            import re
-            plain = re.sub(r"<[^>]+>", " ", desc)
-            plain = re.sub(r"\s+", " ", plain).strip()
-            lines += ["", "<b>Description</b>", f"      {esc(plain[:900])}"]
+            from .rich_text import html_to_telegram
+            desc_tg = html_to_telegram(desc)
+            lines += ["", "<b>Description</b>", f"{desc_tg}"]
 
         url = (f"{self.settings.plane_base_url}/{self.settings.plane_workspace}"
                f"/projects/{self.settings.plane_project_id}/issues/{issue_id}/")
@@ -406,6 +403,21 @@ class Browser:
         ]
         text = "\n".join(lines)
         if ctx and ctx.get("message_id") and self.edit:
+            # editMessageText caps at 4096 — if the full detail is longer,
+            # edit the list into a short version and send the rest as new msgs
+            if len(text) > 4090:
+                short = "\n".join(lines[:3]) + "\n\n<i>… long description below ⬇️</i>"
+                try:
+                    self.edit(ctx["chat_id"], ctx["message_id"], short, kb)
+                except Exception:
+                    self.send(text, kb)
+                    return
+                # send the full description (chunked) as a follow-up
+                from .messages import MAX_MSG
+                full = "\n".join(lines[3:]).strip() or text
+                for i in range(0, len(full), MAX_MSG - 200):
+                    self.send(full[i:i + MAX_MSG - 200])
+                return
             self.edit(ctx["chat_id"], ctx["message_id"], text, kb)
         else:
             self.send(text, kb)
