@@ -73,9 +73,15 @@ class App:
         # keep only the pinned id (or nothing) so old ids don't accumulate
         self.tg.prune_ids([pinned] if pinned else [])
         logger.info("clear chat: deleted %d, failed %d", deleted, failures)
+        # ALWAYS re-ensure the pinned menu exists — if the previous pin was
+        # itself deleted (e.g. manual history clear), a fresh menu is posted
+        # and pinned so the channel is never left menu-less.
+        menu_id = self.ensure_pinned_menu()
         toast = f"🧹 Cleared {deleted} messages (pinned kept)"
         if failures:
             toast += f" · {failures} skipped (too old / system)"
+        if menu_id is not None:
+            toast += f" · 📌 menu #{menu_id}"
         try:
             answer("", toast)
         except Exception:
@@ -108,19 +114,27 @@ class App:
         return True
 
     def setup_telegram(self) -> None:
-        """setMyCommands + pin the commands menu (idempotent)."""
+        """setMyCommands + ensure the commands menu is pinned."""
         try:
             self.tg.set_my_commands(SLASH_COMMANDS)
             logger.info("✓ slash commands registered")
         except TelegramError as exc:
             logger.warning("setMyCommands failed: %s", exc)
-        # Idempotent pinning: if a menu is already pinned, don't re-post/re-pin
-        # (every restart used to spam a fresh "pinned a message" entry).
+        self.ensure_pinned_menu()
+
+    def ensure_pinned_menu(self) -> int | None:
+        """Guarantee the commands menu is pinned.
+
+        - Already pinned (this or any menu): leave it, return its id.
+        - Nothing pinned: post a fresh menu and pin it.
+        Called at startup AND after every 🧹 clear so the pinned message
+        ALWAYS survives / is re-created — the menu is never lost.
+        """
         try:
             existing = self.tg.get_pinned_message_id(None)
             if existing is not None:
-                logger.info("✓ commands menu already pinned (id %s)", existing)
-                return
+                logger.info("✓ commands menu pinned (id %s)", existing)
+                return existing
         except TelegramError:
             pass
         try:
@@ -139,13 +153,16 @@ class App:
                 [{"text": "🧹 Clear chat (keep pinned)", "callback_data": "pt:clear"}],
             ]
             res = self.tg.send_message(text, keyboard=kb)
+            mid = int(res["message_id"])
             try:
-                self.tg.pin_message(None, res["message_id"])
-                logger.info("✓ commands menu pinned")
+                self.tg.pin_message(None, mid)
+                logger.info("✓ commands menu pinned (id %s)", mid)
             except TelegramError as exc:
                 logger.info("pin skipped (may already be pinned): %s", exc)
+            return mid
         except TelegramError as exc:
             logger.warning("pinned menu failed: %s", exc)
+            return None
 
     # ── update loop ───────────────────────────────────
     def dispatch(self, update: dict) -> None:
