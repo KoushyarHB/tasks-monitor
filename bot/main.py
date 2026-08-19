@@ -164,6 +164,9 @@ class App:
                 "chat_id": msg.get("chat", {}).get("id"),
                 "message_id": msg.get("message_id"),
             } if msg.get("message_id") else {}
+            # record the tapped message's id so 🧹 can delete old lists too
+            if msg.get("message_id") and msg.get("chat", {}).get("id") == self.settings.tg_chat_id:
+                self.tg.record_message(int(msg["message_id"]))
             try:
                 self.browser.handle(parsed, qid, ctx=ctx)
             except TelegramError as exc:
