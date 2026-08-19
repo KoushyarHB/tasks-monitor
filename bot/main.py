@@ -1,6 +1,7 @@
 """Entrypoint — startup self-check, both loops (poll + update), graceful shutdown."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -57,7 +58,7 @@ class App:
         message (commands menu) survives; its id stays tracked so future
         clears still skip it.
         """
-        pinned = self.tg.get_pinned_message_id(chat_id)
+        pinned = self._load_menu_id() or self.tg.get_pinned_message_id(chat_id)
         ids = self.tg.tracked_ids()
         deleted = 0
         failures = 0
@@ -70,7 +71,7 @@ class App:
             except TelegramError as exc:
                 failures += 1
                 logger.debug("clear: could not delete %s: %s", mid, exc)
-        # keep only the pinned id (or nothing) so old ids don't accumulate
+        # keep only the menu id (or nothing) so old ids don't accumulate
         self.tg.prune_ids([pinned] if pinned else [])
         logger.info("clear chat: deleted %d, failed %d", deleted, failures)
         # ALWAYS re-ensure the pinned menu exists — if the previous pin was
@@ -122,17 +123,47 @@ class App:
             logger.warning("setMyCommands failed: %s", exc)
         self.ensure_pinned_menu()
 
-    def ensure_pinned_menu(self) -> int | None:
-        """Guarantee the commands menu is pinned.
+    MENU_ID_PATH = os.path.expanduser("~/.hermes/state/standalone_menu_id.json")
 
-        - Already pinned (this or any menu): leave it, return its id.
-        - Nothing pinned: post a fresh menu and pin it.
-        Called at startup AND after every 🧹 clear so the pinned message
-        ALWAYS survives / is re-created — the menu is never lost.
+    def _load_menu_id(self) -> int | None:
+        try:
+            with open(self.MENU_ID_PATH) as f:
+                return int(json.load(f))
+        except Exception:
+            return None
+
+    def _save_menu_id(self, mid: int) -> None:
+        try:
+            os.makedirs(os.path.dirname(self.MENU_ID_PATH), exist_ok=True)
+            with open(self.MENU_ID_PATH, "w") as f:
+                json.dump(mid, f)
+        except Exception:
+            pass
+
+    def ensure_pinned_menu(self) -> int | None:
+        """Guarantee the commands menu is pinned — WITHOUT churning the pin.
+
+        Priority:
+          1. Persisted menu id still exists → re-pin THE SAME message.
+          2. getChat reports a pinned message → adopt it.
+          3. Neither → post a fresh menu, pin it, persist its id.
+
+        The persisted id is the source of truth: even if getChat transiently
+        returns no pin (network hiccup), we never delete or replace the menu.
         """
+        menu_id = self._load_menu_id()
+        if menu_id is not None:
+            try:
+                self.tg.pin_message(None, menu_id)  # idempotent re-pin
+                logger.info("✓ commands menu pinned (id %s)", menu_id)
+                return menu_id
+            except TelegramError:
+                logger.info("menu %s gone — will recreate", menu_id)
+                menu_id = None
         try:
             existing = self.tg.get_pinned_message_id(None)
             if existing is not None:
+                self._save_menu_id(existing)
                 logger.info("✓ commands menu pinned (id %s)", existing)
                 return existing
         except TelegramError:
@@ -156,6 +187,7 @@ class App:
             mid = int(res["message_id"])
             try:
                 self.tg.pin_message(None, mid)
+                self._save_menu_id(mid)
                 logger.info("✓ commands menu pinned (id %s)", mid)
             except TelegramError as exc:
                 logger.info("pin skipped (may already be pinned): %s", exc)

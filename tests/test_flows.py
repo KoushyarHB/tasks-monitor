@@ -504,3 +504,64 @@ def test_prune_ids_keeps_only_pinned(tmp_path, monkeypatch):
     client.record_message(57)
     client.prune_ids([57])
     assert client.tracked_ids() == [57]
+
+
+# ── pin stability (menu never churns) ────────────────
+def test_ensure_pinned_menu_reuses_persisted_id(tmp_path, monkeypatch):
+    import bot.main as main_mod
+    from bot.main import App
+    from bot.config import Settings
+    monkeypatch.setattr(App, "MENU_ID_PATH", str(tmp_path / "menu_id.json"))
+    # persisted id 71 exists → ensure must re-pin 71, never post a new menu
+    (tmp_path / "menu_id.json").write_text("71")
+    posts = []
+    pins = []
+    class FakeTG:
+        def pin_message(self, chat_id, message_id):
+            pins.append(int(message_id))
+        def get_pinned_message_id(self, chat_id=None):
+            return 71
+        def send_message(self, *a, **k):
+            posts.append(1)
+            return {"message_id": 99}
+    settings = Settings(
+        plane_base_url="https://x", plane_workspace="w", plane_project_id="p",
+        plane_csrf_token="c", plane_session_id="s", plane_user_id="u",
+    )
+    app = App.__new__(App)
+    app.tg = FakeTG()
+    app.settings = settings
+    app.MENU_ID_PATH = str(tmp_path / "menu_id.json")
+    app._browser = None
+    mid = app.ensure_pinned_menu()
+    assert mid == 71
+    assert pins == [71]       # re-pinned THE SAME message
+    assert posts == []        # no new menu posted
+
+
+def test_ensure_pinned_menu_recreates_when_persisted_gone(tmp_path, monkeypatch):
+    from bot.main import App
+    from bot.config import Settings
+    monkeypatch.setattr(App, "MENU_ID_PATH", str(tmp_path / "menu_id.json"))
+    (tmp_path / "menu_id.json").write_text("71")
+    class FakeTG:
+        def pin_message(self, chat_id, message_id):
+            from bot.telegram_client import TelegramError
+            if int(message_id) == 71:  # stale persisted id — gone
+                raise TelegramError("message to pin not found", status_code=400)
+        def get_pinned_message_id(self, chat_id=None):
+            return None
+        def send_message(self, *a, **k):
+            return {"message_id": 99}
+    settings = Settings(
+        plane_base_url="https://x", plane_workspace="w", plane_project_id="p",
+        plane_csrf_token="c", plane_session_id="s", plane_user_id="u",
+    )
+    app = App.__new__(App)
+    app.tg = FakeTG()
+    app.settings = settings
+    app.MENU_ID_PATH = str(tmp_path / "menu_id.json")
+    app._browser = None
+    mid = app.ensure_pinned_menu()
+    assert mid == 99  # fresh menu posted
+    assert app._load_menu_id() == 99  # new id persisted
