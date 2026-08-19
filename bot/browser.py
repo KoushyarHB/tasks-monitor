@@ -312,14 +312,23 @@ class Browser:
 
     # ── detail pop-up ─────────────────────────────────
     def _card(self, payload: str, ctx: dict | None = None) -> None:
-        """pt:card:<issue_id>:<view> — show EVERYTHING about one task (edits msg)."""
+        """pt:card:<seq>:<view> — show EVERYTHING about one task (edits msg).
+
+        Uses sequence_id (not the UUID) in the callback data — full UUIDs
+        push callback_data past Telegram's 64-byte cap and get silently dropped.
+        """
         states, members, issues = self._data()
         labels = self._labels()
-        issue_id, _, view = payload.partition(":")
-        card = next((c for c in issues if str(c.get("id", "")) == issue_id), None)
+        seq_str, _, view = payload.partition(":")
+        card = None
+        for c in issues:
+            if str(c.get("sequence_id", "")) == seq_str:
+                card = c
+                break
         if card is None:
             self.send("❌ Card not found", [[{"text": "⬅️ Back", "callback_data": f"pt:back:{view}"}]])
             return
+        issue_id = card.get("id", "")
         me = self.settings.plane_user_id
         seq = card.get("sequence_id")
         name = card.get("name", "")
@@ -447,7 +456,8 @@ class Browser:
             lines.extend(_card_block(c, states, members, me, labels))
             lines.append("")
             iid = c.get("id", "")
-            buttons.append([{"text": f"🔍 [{(c.get('sequence_id') or '')}]", "callback_data": f"pt:card:{iid}:{view}"}])
+            seq = c.get("sequence_id", "")
+            buttons.append([{"text": f"🔍 [{seq}]", "callback_data": f"pt:card:{seq}:{view}"}])
         if not shown:
             lines.append("  (no cards match)")
         lines.append("")

@@ -328,7 +328,7 @@ def test_card_detail_shows_everything():
                       send=lambda text, kb: sent.append((text, kb)),
                       answer=lambda qid, toast: None,
                       edit=lambda chat, mid, text, kb: sent.append((text, kb, "EDIT")))
-    browser.handle(parse_callback("pt:card:i1:my"))
+    browser.handle(parse_callback("pt:card:42:my"))
     text = sent[-1][0]
     assert "Big card" in text
     assert "Description" in text
@@ -340,7 +340,7 @@ def test_card_detail_shows_everything():
 def test_card_detail_edits_message_when_ctx_present():
     issues = [issue("i1", 42, "Card", assignees=[ME])]
     browser, sent, _ = make_browser(issues)
-    browser.handle(parse_callback("pt:card:i1:my"), query_id="q1",
+    browser.handle(parse_callback("pt:card:42:my"), query_id="q1",
                    ctx={"chat_id": -100, "message_id": 55})
     # falls back to send when edit is None (test browser has no edit)
     assert sent and "Card" in sent[-1][0]
@@ -368,11 +368,31 @@ def test_parse_new_stages():
     assert p is not None and p.stage == "page:my" and p.payload == "2"
     p = parse_callback("pt:page:a:koushyar_heidari:backlog:3")
     assert p is not None and p.stage == "page:a"
-    p = parse_callback("pt:card:i1:my")
-    assert p is not None and p.stage == "card" and p.payload == "i1:my"
+    p = parse_callback("pt:card:42:my")
+    assert p is not None and p.stage == "card" and p.payload == "42:my"
     p = parse_callback("pt:back:my")
     assert p is not None and p.stage == "back" and p.payload == "my"
     # malformed
     assert parse_callback("pt:page:x:1") is None
     assert parse_callback("pt:card:") is None
     assert parse_callback("pt:back:") is None
+
+
+def test_all_list_callback_data_within_64_bytes():
+    """Regression: Telegram silently DROPS callback_data >64 bytes. Full UUIDs
+    in pt:card:<uuid>:<view> hit 71 bytes — must stay under with sequence_id."""
+    issues = [issue(f"i{n}", n, f"Card {n}", state="s-backlog", assignees=[ME]) for n in range(1, 20)]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:run:a:koushyar_heidari:backlog"))
+    _, kb = sent[-1]
+    for row in kb:
+        for b in row:
+            cd = b.get("callback_data")
+            if cd:
+                assert len(cd) <= 64, f"callback_data too long ({len(cd)}): {cd}"
+    # verify the detail button uses sequence_id, not the UUID
+    card_cbs = [b["callback_data"] for row in kb for b in row
+                if b.get("callback_data", "").startswith("pt:card:")]
+    assert card_cbs, "expected pt:card: buttons"
+    for cb in card_cbs:
+        assert ":i" not in cb  # no UUID-shaped segment
