@@ -119,3 +119,15 @@ def test_no_three_plus_newlines():
     html = "<h2>What</h2><p>A</p><p>B</p><ul><li>x</li><li>y</li></ul>"
     out = html_to_telegram(html)
     assert "\n\n\n" not in out  # normalized
+
+
+def test_li_nested_p_stays_on_bullet_line():
+    """TipTap nests <p> inside <li> — text must flow right after the bullet."""
+    html = ("<ul><li><p>reduce height (done)</p></li>"
+            "<li><p>fix column <strong>left</strong></p></li></ul>")
+    out = html_to_telegram(html)
+    assert "• reduce height (done)" in out
+    assert "• fix column <b>left</b>" in out
+    # no blank line / orphan bullet
+    assert "• \n\n" not in out
+    assert "• \n" not in out

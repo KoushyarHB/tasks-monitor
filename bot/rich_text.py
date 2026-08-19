@@ -98,10 +98,22 @@ class _TipTapToTelegram(HTMLParser):
         self._list_stack: list[str] = []   # 'ul' or 'ol'
         self._li_index: list[int] = []
         self._skip_depth = 0
+        self._in_li = False  # <li> directly contains <p> in TipTap — suppress block seps
 
     # ── helpers ─────────────────────────────────────
+    def _in_list_item(self) -> bool:
+        return self._in_li
+
     def _emit_block_sep(self) -> None:
-        """Separate blocks with a blank line (much better markdown readability)."""
+        """Separate blocks with a blank line (much better markdown readability).
+
+        Inside a <li> (TipTap nests <p> in <li>) block separators are
+        suppressed so the bullet and its text stay on one line.
+        """
+        if self._in_li:
+            # inside a list item the text flows right after the bullet —
+            # no separators at all (TipTap nests <p> inside <li>)
+            return
         if self._out and not self._out[-1].endswith("\n\n"):
             if self._out[-1].endswith("\n"):
                 self._out.append("\n")
@@ -147,6 +159,7 @@ class _TipTapToTelegram(HTMLParser):
                 if self._out and not self._out[-1].endswith("\n"):
                     self._out.append("\n")
                 self._emit_bullet()
+                self._in_li = True
             elif tag == "blockquote":
                 self._emit_block_sep()
                 self._out.append("<blockquote>")
@@ -181,6 +194,8 @@ class _TipTapToTelegram(HTMLParser):
                 if self._li_index:
                     self._li_index.pop()
                 self._emit_block_sep()
+            elif tag == "li":
+                self._in_li = False
             elif tag == "blockquote":
                 self._out.append("</blockquote>")
                 self._emit_block_sep()
