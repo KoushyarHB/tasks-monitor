@@ -91,9 +91,14 @@ class Browser:
         if self._cache.get("ts", 0) < now - 60:
             states = self.client.get_states()
             members = self.client.get_members()
+            labels = self.client.get_labels()
             issues = self.client.get_issues()
-            self._cache = {"ts": now, "states": states, "members": members, "issues": issues}
+            self._cache = {"ts": now, "states": states, "members": members, "labels": labels, "issues": issues}
         return self._cache["states"], self._cache["members"], self._cache["issues"]
+
+    def _labels(self) -> dict[str, str]:
+        self._data()  # ensure cache warm
+        return self._cache.get("labels", {})
 
     # ── dispatch ──────────────────────────────────────
     def handle(self, parsed: ParsedCallback, query_id: str = "") -> None:
@@ -256,8 +261,9 @@ class Browser:
         me = self.settings.plane_user_id
         lines = [f"🎯 <b>Tasks</b> — {header} ({len(cards)})", ""]
         buttons: list[list[dict[str, str]]] = []
+        labels = self._labels()
         for c in cards[:15]:
-            lines.extend(_card_block(c, states, members, me))
+            lines.extend(_card_block(c, states, members, me, labels))
             lines.append("")
             url = (f"{self.settings.plane_base_url}/{self.settings.plane_workspace}"
                    f"/projects/{self.settings.plane_project_id}/issues/{c.get('id')}/")
@@ -309,7 +315,13 @@ STATE_ICON = {
 }
 
 
-def _card_block(c: dict[str, Any], states: dict[str, str], members: dict[str, str], me: str | None) -> list[str]:
+def _card_block(
+    c: dict[str, Any],
+    states: dict[str, str],
+    members: dict[str, str],
+    me: str | None,
+    labels: dict[str, str] | None = None,
+) -> list[str]:
     """Render one task card as a list of lines (title + meta), nice typography."""
     seq = c.get("sequence_id")
     name = c.get("name", "")
@@ -319,8 +331,29 @@ def _card_block(c: dict[str, Any], states: dict[str, str], members: dict[str, st
     as_ids = [str(a) for a in (c.get("assignee_ids") or [])]
     a_names = ", ".join(members.get(i, i) for i in as_ids) or "Unassigned"
     mine = "🟦 " if me and me in as_ids else ""
+    draft = "📄 " if c.get("is_draft") else ""
 
-    title = f"{mine}<b>[{seq}]</b> {esc(name)}"
+    title = f"{mine}{draft}<b>[{seq}]</b> {esc(name)}"
     icon = STATE_ICON.get(st, "▪️")
     meta = f"      {icon} {esc(st)} · {dot} {esc(prio)} · 👤 {esc(a_names)}"
-    return [title, meta]
+
+    # extra meta bits — only shown when present (editorial restraint)
+    bits = []
+    if labels and c.get("label_ids"):
+        tag_names = [labels.get(str(lid), "") for lid in c.get("label_ids") or []]
+        tag_names = [t for t in tag_names if t]
+        if tag_names:
+            bits.append("🏷️ " + " ".join(f"#{t}" for t in tag_names))
+    if c.get("sub_issues_count"):
+        bits.append(f"🧩 {c['sub_issues_count']}")
+    if c.get("attachment_count"):
+        bits.append(f"📎 {c['attachment_count']}")
+    if c.get("target_date"):
+        bits.append(f"📅 {esc(str(c['target_date'])[:10])}")
+    if c.get("start_date"):
+        bits.append(f"🚩 {esc(str(c['start_date'])[:10])}")
+
+    lines = [title, meta]
+    if bits:
+        lines.append("      " + " · ".join(bits))
+    return lines

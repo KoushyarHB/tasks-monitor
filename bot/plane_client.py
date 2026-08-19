@@ -132,6 +132,22 @@ class PlaneClient:
             break  # no pagination signal; assume single page
         return results
 
+    def get_labels(self) -> dict[str, str]:
+        """Return {label_id: label_name} — workspace-level (project endpoint 404s on CE v1)."""
+        path = f"/api/workspaces/{self.workspace}/labels/"
+        try:
+            data = self._get(path)
+        except PlaneApiError:
+            return {}
+        batch = data.get("results") if isinstance(data, dict) else data
+        out: dict[str, str] = {}
+        for l in batch or []:
+            lid = str(l.get("id", ""))
+            name = l.get("name", "")
+            if lid and name:
+                out[lid] = name
+        return out
+
     def get_states(self) -> dict[str, str]:
         """Return {state_id: state_name}."""
         path = f"/api/workspaces/{self.workspace}/projects/{self.project_id}/states/"

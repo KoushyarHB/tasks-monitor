@@ -231,3 +231,31 @@ def test_all_keyboards_valid_shape():
                 cd = b.get("callback_data")
                 if cd:
                     assert len(cd) <= 64
+
+
+def test_card_block_shows_labels_and_meta():
+    from bot.browser import _card_block
+    from bot.messages import esc
+    c = {
+        "id": "i1", "sequence_id": 42, "name": "Big card", "state_id": "s-todo",
+        "priority": "high", "assignee_ids": [ME], "is_draft": False,
+        "label_ids": ["l-backend", "l-bug"],
+        "sub_issues_count": 3, "attachment_count": 2,
+        "target_date": "2026-09-01T00:00:00Z",
+    }
+    labels = {"l-backend": "backend", "l-bug": "bug"}
+    lines = _card_block(c, STATES, MEMBERS, ME, labels)
+    text = "\n".join(lines)
+    assert "#backend" in text and "#bug" in text
+    assert "🧩 3" in text
+    assert "📎 2" in text
+    assert "📅 2026-09-01" in text
+    assert "🟦" in text  # mine marker
+
+
+def test_card_block_hides_empty_meta():
+    from bot.browser import _card_block
+    c = {"id": "i1", "sequence_id": 42, "name": "Plain", "state_id": "s-todo",
+         "priority": "none", "assignee_ids": [ME]}
+    lines = _card_block(c, STATES, MEMBERS, ME, {})
+    assert len(lines) == 2  # no extra meta line when nothing present

@@ -195,6 +195,27 @@ def test_members_normalized_nested():
     assert c.get_members() == {"u1": "Koushyar Heidari", "u2": "feizyr"}
 
 
+def test_labels_workspace_level():
+    def handler(request):
+        if "/labels/" in str(request.url):
+            return _resp({"results": [
+                {"id": "l1", "name": "backend"},
+                {"id": "l2", "name": "bug"},
+            ]})
+        return _resp({"results": []})
+
+    c = make_client(handler)
+    assert c.get_labels() == {"l1": "backend", "l2": "bug"}
+
+
+def test_labels_404_returns_empty():
+    def handler(request):
+        return httpx.Response(404, json={})
+
+    c = make_client(handler)
+    assert c.get_labels() == {}
+
+
 def test_members_flat_uuid_shape_with_workspace_resolution():
     """Live Plane v1 returns flat [{member: '<uuid>', ...}]; names are resolved
     by a second call to the workspace members endpoint (nested dicts)."""
