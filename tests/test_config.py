@@ -45,10 +45,10 @@ def test_plane_headers():
 
 def test_dotenv_loader(tmp_path):
     f = tmp_path / ".env"
-    f.write_text("# comment\nPLANE_WORKSPACE=tms\nTG_CHAT_ID=-1004447454544\n")
+    f.write_text("# comment\nPLANE_WORKSPACE=tms\nTEST_DOTENV_UNIQUE_VAR=xyz123\n")
     _load_dotenv(f)
     assert os.environ.get("PLANE_WORKSPACE") == "tms"
-    assert os.environ.get("TG_CHAT_ID") == "-1004447454544"
+    assert os.environ.get("TEST_DOTENV_UNIQUE_VAR") == "xyz123"
 
 
 def test_base_url_trailing_slash_stripped():

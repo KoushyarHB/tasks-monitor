@@ -33,6 +33,22 @@ def _issue_description(issue: dict[str, Any] | None) -> str:
     return ""
 
 
+def _fmt_time(ts: Any) -> str:
+    """Format a timestamp for display: '2026-08-19T11:27:02.945835Z' → '2026-08-19 11:27'."""
+    if not ts:
+        return ""
+    s = str(ts)
+    # ISO with T separator and optional fractional seconds / tz
+    s = s.replace("T", " ").split(".")[0]
+    if s.endswith("Z") or "+" in s:
+        s = s.rstrip("Z").split("+")[0]
+    # keep YYYY-MM-DD HH:MM (drop seconds for compactness)
+    parts = s.split(" ")
+    if len(parts) == 2 and len(parts[1]) >= 5:
+        parts[1] = parts[1][:5]
+    return " ".join(parts)
+
+
 def diff_issues(
     old_snapshot: dict[str, Any] | None,
     new_issues: list[dict[str, Any]],
@@ -74,8 +90,11 @@ def diff_issues(
             changes.append(Change(
                 issue_id=iid, sequence_id=old_seq, name=name, kind="new",
                 is_mine=is_mine,
-                created_by=(new or {}).get("created_by", ""),
-                created_at=(new or {}).get("created_at", ""),
+                # resolve the creator UUID to a display name (spec §6.2 shows
+                # "Created by alighahremani", never a raw id)
+                created_by=members.get(str((new or {}).get("created_by", "")), "")
+                    or str((new or {}).get("created_by", "")),
+                created_at=_fmt_time((new or {}).get("created_at", "")),
                 # populate actual card details so reports show them (spec §6.2)
                 new=st_name(str((new or {}).get("state_id", ""))),
                 old=(new or {}).get("priority", "") or "none",

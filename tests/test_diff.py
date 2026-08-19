@@ -114,10 +114,12 @@ def test_description_unchanged_no_change():
 def test_new_card_carries_full_details():
     new_issue = issue("i1", 5, "New card", state="s-backlog", prio="high",
                       assignees=["u-fei"], created_by="u-fei",
-                      created_at="2026-08-18T10:13:00Z")
+                      created_at="2026-08-18T10:13:00.123456Z")
     changes = diff_issues(None, [new_issue], STATES, MEMBERS, ME)
     c = changes[0]
     assert c.kind == "new"
     assert c.new == "Backlog"          # state name
     assert c.old == "high"             # priority
     assert c.extra["assignees"] == "feizyr"  # names resolved via members
+    assert c.created_by == "feizyr"    # creator UUID resolved to display name
+    assert c.created_at == "2026-08-18 10:13"  # timestamp formatted

@@ -1,0 +1,15 @@
+[Unit]
+Description=Saba Tasks Monitor (Standalone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tasks-monitor
+EnvironmentFile=%h/tasks-monitor/.env
+ExecStart=%h/tasks-monitor/.venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
