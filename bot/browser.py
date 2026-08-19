@@ -472,16 +472,25 @@ class Browser:
         lines.append("")
 
         for c in shown:
-            url = (f"{self.settings.plane_base_url}/{self.settings.plane_workspace}"
-                   f"/projects/{self.settings.plane_project_id}/issues/{c.get('id')}/")
-            lines.extend(_card_block(c, states, members, me, labels, detail_url=True, plane_url=url))
+            lines.extend(_card_block(c, states, members, me, labels))
             lines.append("")
         if not shown:
             lines.append("  (no cards match)")
         lines.append("")
-        lines.append("🔄 <i>Tap 🔍 next to a card for details</i>")
+        lines.append("🔄 <i>Tap 🔍 for full description</i>")
 
         buttons: list[list[dict[str, str]]] = []
+        # 🔍 magnifier grid — 5 per row, opens the full-description pop-up
+        # (uses sequence_id: full UUIDs would exceed Telegram's 64-byte cap)
+        grid: list[dict[str, str]] = []
+        for c in shown:
+            seq = c.get("sequence_id", "")
+            grid.append({"text": f"🔍[{seq}]", "callback_data": f"pt:card:{seq}:{view}"})
+            if len(grid) == 5:
+                buttons.append(grid)
+                grid = []
+        if grid:
+            buttons.append(grid)
         # pagination row: ⏮️ ◀️ current ▶️ ⏭️ — disabled ends send noop
         if total_pages > 1:
             nav = []

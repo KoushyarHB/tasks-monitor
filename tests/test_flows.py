@@ -389,13 +389,17 @@ def test_all_list_callback_data_within_64_bytes():
             cd = b.get("callback_data")
             if cd:
                 assert len(cd) <= 64, f"callback_data too long ({len(cd)}): {cd}"
-    # detail access is now an inline link next to each card — no button rows
+    # 🔍 grid buttons present, compact (5 per row), using sequence_id
     card_cbs = [b["callback_data"] for row in kb for b in row
                 if b.get("callback_data", "").startswith("pt:card:")]
-    assert not card_cbs, "pt:card buttons removed (inline links instead)"
-    # every card title carries an inline 🔍 link to the Plane issue
-    assert '<a href="' in text and "🔍" in text
-    assert text.count("🔍") >= 15  # one per visible card
+    assert len(card_cbs) == 15  # one per visible card
+    for cb in card_cbs:
+        assert ":i" not in cb  # no UUID-shaped segment
+    # grid rows never exceed 5 buttons
+    grid_rows = [row for row in kb
+                 if any(b.get("callback_data", "").startswith("pt:card:") for b in row)]
+    for row in grid_rows:
+        assert len(row) <= 5
 
 
 # ── 5-button pagination ───────────────────────────────
