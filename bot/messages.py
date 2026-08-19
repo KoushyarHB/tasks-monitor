@@ -174,7 +174,20 @@ def _change_lines(c: Change, concise: bool = False) -> list[str]:
 
 def _change_detail(c: Change, short: bool = False) -> str:
     if c.kind == "new":
-        return f"Status: {esc(c.new or 'New')}"
+        # actual card details (populated by the diff engine)
+        parts = []
+        st = c.new or ""
+        prio = c.old or ""
+        if st and st != "?":
+            parts.append(f"Status: {esc(st)}")
+        if prio and prio != "none":
+            parts.append(f"Priority: {esc(prio)}")
+        assignees = c.extra.get("assignees") or ""
+        if isinstance(assignees, list):
+            assignees = ", ".join(assignees)
+        if assignees:
+            parts.append("Assignees: " + esc(assignees))
+        return " · ".join(parts)
     if c.kind == "deleted":
         return "removed"
     if c.kind == "state":
@@ -188,4 +201,6 @@ def _change_detail(c: Change, short: bool = False) -> str:
         return f"Assignees: {esc(c.old)} → {esc(c.new)}"
     if c.kind == "name":
         return f"Title: {esc(c.old)} → {esc(c.new)}"
+    if c.kind == "description":
+        return "Description updated"
     return ""

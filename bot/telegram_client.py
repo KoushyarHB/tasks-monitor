@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -17,6 +18,15 @@ MAX_MSG = 4096
 class TelegramError(Exception):
     """Raised on non-ok Telegram API responses (NEVER swallowed silently)."""
 
+    def __init__(self, message: str, status_code: int | None = None, retry_after: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+class TelegramRateLimitError(TelegramError):
+    """Raised on HTTP 429 — carries Retry-After seconds for backoff."""
+
 
 class TelegramClient:
     def __init__(self, token: str, proxy: str = "", chat_id: str = "", timeout: float = 40.0):
@@ -27,27 +37,48 @@ class TelegramClient:
         self._transport = None  # injectable for tests
 
     # ── low-level ─────────────────────────────────────
-    def _api(self, method: str, **params) -> dict[str, Any]:
+    def _api(self, method: str, max_retries: int = 3, **params) -> dict[str, Any]:
+        """Call the Bot API with 429 Retry-After + transient 5xx backoff."""
         url = f"https://api.telegram.org/bot{self.token}/{method}"
         client_kw: dict[str, Any] = {"timeout": self.timeout}
         if self.proxy:
             client_kw["proxy"] = self.proxy
         if self._transport:
             client_kw["transport"] = self._transport
-        try:
-            with httpx.Client(**client_kw) as client:
-                r = client.post(url, data=params)
-        except httpx.HTTPError as exc:
-            raise TelegramError(f"Telegram transport error: {exc}") from exc
-        try:
-            body = r.json()
-        except ValueError as exc:
-            raise TelegramError(f"Telegram invalid JSON ({r.status_code})") from exc
-        if not body.get("ok"):
-            desc = body.get("description", "unknown error")
-            code = body.get("error_code", r.status_code)
-            raise TelegramError(f"Telegram API error {code}: {desc}")
-        return body.get("result", {})
+
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                with httpx.Client(**client_kw) as client:
+                    r = client.post(url, data=params)
+            except httpx.HTTPError as exc:
+                raise TelegramError(f"Telegram transport error: {exc}") from exc
+            if r.status_code == 429:
+                retry_after = 0
+                try:
+                    retry_after = int(r.headers.get("Retry-After", "0"))
+                except ValueError:
+                    retry_after = 0
+                if attempt < max_retries:
+                    time.sleep(min(retry_after, 30) if retry_after else 2 * attempt)
+                    continue
+                raise TelegramRateLimitError(
+                    f"Telegram rate limited (429) after {attempt} attempts",
+                    status_code=429, retry_after=retry_after,
+                )
+            if r.status_code >= 500 and attempt < max_retries:
+                time.sleep(2 * attempt)
+                continue
+            try:
+                body = r.json()
+            except ValueError as exc:
+                raise TelegramError(f"Telegram invalid JSON ({r.status_code})") from exc
+            if not body.get("ok"):
+                desc = body.get("description", "unknown error")
+                code = body.get("error_code", r.status_code)
+                raise TelegramError(f"Telegram API error {code}: {desc}", status_code=code)
+            return body.get("result", {})
 
     # ── sends ─────────────────────────────────────────
     def send_message(

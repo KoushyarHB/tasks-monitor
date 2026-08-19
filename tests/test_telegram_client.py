@@ -105,3 +105,45 @@ def test_get_updates_allowed_types():
     assert captured["form"]["offset"][0] == "5"
     allowed = json.loads(captured["form"]["allowed_updates"][0])
     assert "callback_query" in allowed
+
+
+def test_429_retries_then_succeeds():
+    from bot.telegram_client import TelegramRateLimitError
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "1"}, json={"ok": False, "description": "Too Many Requests"})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+
+    c = make_client(handler)
+    c.send_message("x")
+    assert calls["n"] == 2  # retried after 429
+
+
+def test_429_exhausts_retries_raises():
+    from bot.telegram_client import TelegramRateLimitError
+
+    def handler(request):
+        return httpx.Response(429, headers={"Retry-After": "1"}, json={"ok": False, "description": "Too Many Requests"})
+
+    c = make_client(handler)
+    with pytest.raises(TelegramRateLimitError) as ei:
+        c.send_message("x")
+    assert ei.value.retry_after == 1
+    assert ei.value.status_code == 429
+
+
+def test_500_backoff_retries_then_succeeds():
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return httpx.Response(500, json={})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+
+    c = make_client(handler)
+    c.send_message("x")
+    assert calls["n"] == 3

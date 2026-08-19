@@ -96,3 +96,28 @@ def test_assignee_mine_transition():
     new = [issue("i1", 5, "Card", assignees=["u-fei", ME])]
     changes = diff_issues(old, new, STATES, MEMBERS, ME)
     assert any(c.is_mine for c in changes)
+
+
+def test_description_change_detected():
+    old = snapshot([issue("i1", 5, "Card", description_html="<p>old</p>")])
+    new = [issue("i1", 5, "Card", description_html="<p>new</p>")]
+    changes = diff_issues(old, new, STATES, MEMBERS, ME)
+    assert any(c.kind == "description" for c in changes)
+
+
+def test_description_unchanged_no_change():
+    old = snapshot([issue("i1", 5, "Card", description_html="<p>same</p>")])
+    new = [issue("i1", 5, "Card", description_html="<p>same</p>")]
+    assert diff_issues(old, new, STATES, MEMBERS, ME) == []
+
+
+def test_new_card_carries_full_details():
+    new_issue = issue("i1", 5, "New card", state="s-backlog", prio="high",
+                      assignees=["u-fei"], created_by="u-fei",
+                      created_at="2026-08-18T10:13:00Z")
+    changes = diff_issues(None, [new_issue], STATES, MEMBERS, ME)
+    c = changes[0]
+    assert c.kind == "new"
+    assert c.new == "Backlog"          # state name
+    assert c.old == "high"             # priority
+    assert c.extra["assignees"] == "feizyr"  # names resolved via members

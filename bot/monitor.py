@@ -21,6 +21,18 @@ def _norm_assignees(issue: dict[str, Any] | None) -> list[str]:
     return [str(a) for a in (issue.get("assignee_ids") or [])]
 
 
+def _issue_description(issue: dict[str, Any] | None) -> str:
+    """Normalize the description field — live payloads use description_html,
+    older API shapes may use description_stripped or description."""
+    if not issue:
+        return ""
+    for key in ("description_html", "description_stripped", "description"):
+        val = issue.get(key)
+        if val:
+            return str(val)
+    return ""
+
+
 def diff_issues(
     old_snapshot: dict[str, Any] | None,
     new_issues: list[dict[str, Any]],
@@ -64,6 +76,10 @@ def diff_issues(
                 is_mine=is_mine,
                 created_by=(new or {}).get("created_by", ""),
                 created_at=(new or {}).get("created_at", ""),
+                # populate actual card details so reports show them (spec §6.2)
+                new=st_name(str((new or {}).get("state_id", ""))),
+                old=(new or {}).get("priority", "") or "none",
+                extra={"assignees": assignee_names(_norm_assignees(new))},
             ))
             continue
 
@@ -79,6 +95,8 @@ def diff_issues(
         o_as, n_as = _norm_assignees(old), _norm_assignees(new)
         o_name = str(old.get("name", ""))
         n_name = str(new.get("name", ""))
+        o_desc = _issue_description(old)
+        n_desc = _issue_description(new)
 
         if o_state != n_state:
             changes.append(Change(
@@ -104,6 +122,11 @@ def diff_issues(
                 issue_id=iid, sequence_id=old_seq, name=name, kind="name",
                 old=o_name, new=n_name, is_mine=is_mine,
             ))
+        if o_desc != n_desc and o_desc and n_desc:
+            changes.append(Change(
+                issue_id=iid, sequence_id=old_seq, name=name, kind="description",
+                old="", new="", is_mine=is_mine,
+            ))
 
     return changes
 
@@ -121,6 +144,10 @@ def _build_snapshot(issues: list[dict[str, Any]], ts: str) -> dict[str, Any]:
                 "created_by": i.get("created_by"),
                 "created_at": i.get("created_at"),
                 "updated_at": i.get("updated_at"),
+                "description_html": i.get("description_html")
+                    or i.get("description_stripped")
+                    or i.get("description")
+                    or "",
             }
             for i in issues
         },
@@ -156,10 +183,7 @@ def run_poll_once(
         states=states, members=members, me=settings.plane_user_id,
     )
 
-    # persist the new snapshot regardless
     new_snapshot = _build_snapshot(issues, now)
-    save_state(state_path, new_snapshot)
-
     report = build_report(
         changes,
         focus=settings.plane_focus,
@@ -170,9 +194,15 @@ def run_poll_once(
         fetched_at=now,
     )
     if report is None:
+        # nothing changed — persist snapshot, stay silent
+        save_state(state_path, new_snapshot)
         return None
     text, rows = report
+    # deliver FIRST, then persist: if delivery fails the snapshot is NOT
+    # advanced, so the next poll re-detects the change and retries
+    # (at-least-once semantics — a lost notification is worse than a duplicate).
     tg.send_chunked(text, keyboard=rows)
+    save_state(state_path, new_snapshot)
     logger.info("posted %d-change report (%d chars)", len(changes), len(text))
     return text
 

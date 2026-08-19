@@ -77,6 +77,14 @@ def test_parse_my_help():
 def test_parse_unknown_returns_none():
     assert parse_callback("xx:yy") is None
     assert parse_callback("pt:bogus") is None
+    # strict protocol enforcement (spec §7.8 — unknown tokens rejected)
+    assert parse_callback("pt:start:garbage") is None
+    assert parse_callback("pt:pick:unknown:x") is None
+    assert parse_callback("pt:pick:assignee:") is None        # empty slug
+    assert parse_callback("pt:run:x:foo:bar") is None          # bad order marker
+    assert parse_callback("pt:run:a:") is None                 # missing values
+    assert parse_callback("pt:my:extra") is None               # payload not allowed
+    assert parse_callback("pt:help:extra") is None
 
 
 # ── stage 1 ───────────────────────────────────────────

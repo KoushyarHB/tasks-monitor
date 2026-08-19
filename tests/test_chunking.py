@@ -67,6 +67,26 @@ def test_report_contains_header():
     assert "📋 <b>Plane Monitor</b> — 2026-08-18 09:10" in text
 
 
+def test_report_new_card_shows_details():
+    from bot.monitor import diff_issues
+    # build a real "new" Change with full details via the diff engine
+    new_issue = {"id": "i9", "sequence_id": 9, "name": "New card",
+                 "state_id": "s-backlog", "priority": "high",
+                 "assignee_ids": ["u-fei"], "created_by": "u-fei",
+                 "created_at": "2026-08-18T10:13:00Z"}
+    changes = diff_issues(None, [new_issue],
+                          states={"s-backlog": "Backlog"},
+                          members={"u-fei": "feizyr"}, me=ME)
+    c = changes[0]
+    c.is_mine = True
+    r = build_report([c])
+    text, _ = r
+    assert "Status: Backlog" in text
+    assert "Priority: high" in text
+    assert "Assignees: feizyr" in text
+    assert "Status: New" not in text  # real details, not the placeholder
+
+
 def test_report_my_section_only_for_mine():
     mine = ch(kind="state", old="Todo", new="Done")
     mine.is_mine = True

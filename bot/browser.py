@@ -33,19 +33,34 @@ class ParsedCallback:
 
 
 def parse_callback(data: str) -> ParsedCallback | None:
-    """Parse a pt: callback token (see SPEC §7.2)."""
+    """Parse a pt: callback token (see SPEC §7.2).
+
+    Returns None for ANY unknown/malformed token — unknown tokens must be
+    rejected (spec §7.8), never silently accepted.
+    """
     if not data.startswith("pt:"):
         return None
     rest = data[3:]
     head, _, tail = rest.partition(":")
     if head == "pick":
+        # stage pick:<sub>:<slug> — sub must be assignee|state, slug required
         sub, _, pl = tail.partition(":")
+        if sub not in ("assignee", "state") or not pl:
+            return None
         return ParsedCallback(stage=f"pick:{sub}", payload=pl)
     if head == "run":
-        return ParsedCallback(stage="run", payload=tail)  # a:... or s:...
+        # run:<order>:<a>:<s> — order must be a|s, and both values required
+        order, _, rest_payload = tail.partition(":")
+        if order not in ("a", "s") or not rest_payload:
+            return None
+        return ParsedCallback(stage="run", payload=tail)
     if head == "start":
+        if tail not in ("assignee", "state"):
+            return None
         return ParsedCallback(stage="start", payload=tail)
     if head in ("my", "help"):
+        if tail:
+            return None  # no payload allowed
         return ParsedCallback(stage=head, payload="")
     return None
 

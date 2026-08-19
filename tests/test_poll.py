@@ -129,3 +129,47 @@ def test_focus_mine_omits_other_cards(tmp_path):
     text = "".join(sent)
     assert "Mine" in text
     assert "Other" not in text  # other-card change hidden in mine-focus
+
+
+def test_state_not_advanced_when_delivery_fails(tmp_path):
+    """At-least-once: if send_chunked raises, the snapshot must NOT advance,
+    so the next poll re-detects the change and retries."""
+    import json as _json
+    from bot.telegram_client import TelegramError
+
+    state_path = str(tmp_path / "state.json")
+    batches = iter([
+        [issue("i1", 5, "Card", state="s-todo", assignees=[ME])],
+        [issue("i1", 5, "Card", state="s-done", assignees=[ME])],
+        [issue("i1", 5, "Card", state="s-done", assignees=[ME])],
+    ])
+    sent = []
+    settings, plane, tg = build_clients(lambda: next(batches), sent)
+
+    # baseline (delivery not involved)
+    run_poll_once(plane, tg, settings, state_path)
+    before = _json.load(open(state_path))
+    assert before["issues"]["i1"]["state_id"] == "s-todo"
+
+    # inject a delivery failure on the next send
+    orig_send = tg.send_chunked
+
+    def failing_send(*a, **kw):
+        raise TelegramError("delivery down")
+
+    tg.send_chunked = failing_send
+    try:
+        run_poll_once(plane, tg, settings, state_path)
+    except TelegramError:
+        pass
+    finally:
+        tg.send_chunked = orig_send
+
+    # state must still be the OLD snapshot → change not yet acknowledged
+    after = _json.load(open(state_path))
+    assert after["issues"]["i1"]["state_id"] == "s-todo"
+
+    # next poll (delivery healthy) re-detects the change and posts
+    result = run_poll_once(plane, tg, settings, state_path)
+    assert result is not None
+    assert "Todo → Done" in result
