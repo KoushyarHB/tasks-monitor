@@ -98,6 +98,26 @@ class TelegramClient:
             params["reply_markup"] = json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
         return self._api("sendMessage", **params)
 
+    def edit_message(
+        self,
+        text: str,
+        chat_id: str,
+        message_id: int | str,
+        keyboard: list[list[dict[str, str]]] | None = None,
+        parse_mode: str = "HTML",
+    ) -> dict[str, Any]:
+        """Replace an existing message (used for the task-detail pop-up)."""
+        params: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": str(message_id),
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": "true",
+        }
+        if keyboard is not None:
+            params["reply_markup"] = json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
+        return self._api("editMessageText", **params)
+
     def send_chunked(
         self,
         text: str,

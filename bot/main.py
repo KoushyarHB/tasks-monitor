@@ -37,6 +37,7 @@ class App:
                 self.plane, self.settings,
                 send=lambda text, kb: self.tg.send_chunked(text, keyboard=kb),
                 answer=lambda qid, toast: self._safe_answer(qid, toast),
+                edit=lambda chat_id, mid, text, kb: self.tg.edit_message(text, chat_id, mid, keyboard=kb),
             )
         return self._browser
 
@@ -107,8 +108,14 @@ class App:
             if parsed is None:
                 self._safe_answer(qid, "Unknown action")
                 return
+            # context for pop-up editing (editMessageText needs chat + message id)
+            msg = cb.get("message") or {}
+            ctx = {
+                "chat_id": msg.get("chat", {}).get("id"),
+                "message_id": msg.get("message_id"),
+            } if msg.get("message_id") else {}
             try:
-                self.browser.handle(parsed, qid)
+                self.browser.handle(parsed, qid, ctx=ctx)
             except TelegramError as exc:
                 logger.error("browser handler delivery error: %s", exc)
             except Exception as exc:

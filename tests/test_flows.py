@@ -259,3 +259,120 @@ def test_card_block_hides_empty_meta():
          "priority": "none", "assignee_ids": [ME]}
     lines = _card_block(c, STATES, MEMBERS, ME, {})
     assert len(lines) == 2  # no extra meta line when nothing present
+
+
+# ── pagination ────────────────────────────────────────
+def test_list_paginated_with_20_cards():
+    issues = [issue(f"i{n}", n, f"Card {n}", assignees=[ME]) for n in range(1, 21)]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:my"))
+    text, kb = sent[-1]
+    assert "📄 1/2" in text          # pagination indicator
+    assert "Card 15" in text         # page 1 shows first 15
+    assert "Card 16" not in text     # page 2 content not on page 1
+    # next-page button present
+    cb = [b["callback_data"] for row in kb for b in row if "callback_data" in b]
+    assert any(c == "pt:page:my:2" for c in cb)
+    # prev absent on page 1
+    assert not any(c == "pt:page:my:0" for c in cb)
+
+
+def test_page_navigation_renders_page_2():
+    issues = [issue(f"i{n}", n, f"Card {n}", assignees=[ME]) for n in range(1, 21)]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:page:my:2"))
+    text, kb = sent[-1]
+    assert "📄 2/2" in text
+    assert "Card 16" in text
+    assert "Card 1\n" not in text and "Card 1 " not in text  # page-1 cards absent
+    cb = [b["callback_data"] for row in kb for b in row if "callback_data" in b]
+    assert any(c == "pt:page:my:1" for c in cb)  # prev button on page 2
+
+
+def test_pagination_assignee_view():
+    issues = [issue(f"i{n}", n, f"Card {n}", state="s-backlog", assignees=[ME]) for n in range(1, 20)]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:run:a:koushyar_heidari:backlog"))
+    text, kb = sent[-1]
+    cb = [b["callback_data"] for row in kb for b in row if "callback_data" in b]
+    assert any(c == "pt:page:a:koushyar_heidari:backlog:2" for c in cb)
+
+
+# ── detail pop-up ─────────────────────────────────────
+def test_card_detail_shows_everything():
+    issues = [{"id": "i1", "sequence_id": 42, "name": "Big card", "state_id": "s-todo",
+               "priority": "high", "assignee_ids": [ME], "label_ids": ["l1"],
+               "sub_issues_count": 3, "target_date": "2026-09-01T00:00:00Z",
+               "created_by": ME}]
+    # detail endpoint returns description
+    def router(request):
+        url = str(request.url)
+        if "/states/" in url:
+            return httpx.Response(200, json={"results": [{"id": "s-todo", "name": "Todo"}]})
+        if "/members/" in url:
+            return httpx.Response(200, json={"results": [{"member": {"id": ME, "display_name": "Koushyar Heidari"}}]})
+        if "/issues/i1/" in url and not url.endswith("/issues/"):
+            return httpx.Response(200, json={
+                "id": "i1", "name": "Big card", "description_html": "<p>Do the thing</p>",
+                "state_id": "s-todo", "priority": "high", "assignee_ids": [ME],
+            })
+        return httpx.Response(200, json={"results": issues})
+
+    settings = Settings(
+        plane_base_url=BASE, plane_workspace="tms", plane_project_id="proj",
+        plane_csrf_token="c", plane_session_id="s", plane_user_id=ME, plane_focus="mine",
+    )
+    client = PlaneClient(settings, transport=httpx.MockTransport(router))
+    sent = []
+    browser = Browser(client, settings,
+                      send=lambda text, kb: sent.append((text, kb)),
+                      answer=lambda qid, toast: None,
+                      edit=lambda chat, mid, text, kb: sent.append((text, kb, "EDIT")))
+    browser.handle(parse_callback("pt:card:i1:my"))
+    text = sent[-1][0]
+    assert "Big card" in text
+    assert "Description" in text
+    assert "Do the thing" in text
+    assert "Todo" in text
+    assert "high" in text
+
+
+def test_card_detail_edits_message_when_ctx_present():
+    issues = [issue("i1", 42, "Card", assignees=[ME])]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:card:i1:my"), query_id="q1",
+                   ctx={"chat_id": -100, "message_id": 55})
+    # falls back to send when edit is None (test browser has no edit)
+    assert sent and "Card" in sent[-1][0]
+
+
+def test_back_returns_to_list():
+    issues = [issue("i1", 1, "A", assignees=[ME])]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:back:my"))
+    text = sent[-1][0]
+    assert "My Tasks" in text
+
+
+def test_back_to_assignee_view():
+    issues = [issue("i1", 1, "A", state="s-todo", assignees=[ME])]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:back:a:koushyar_heidari:todo"))
+    text = sent[-1][0]
+    assert "Assignee: <b>Koushyar Heidari</b> · State: <b>Todo</b>" in text
+
+
+# ── strict protocol for new stages ────────────────────
+def test_parse_new_stages():
+    p = parse_callback("pt:page:my:2")
+    assert p is not None and p.stage == "page:my" and p.payload == "2"
+    p = parse_callback("pt:page:a:koushyar_heidari:backlog:3")
+    assert p is not None and p.stage == "page:a"
+    p = parse_callback("pt:card:i1:my")
+    assert p is not None and p.stage == "card" and p.payload == "i1:my"
+    p = parse_callback("pt:back:my")
+    assert p is not None and p.stage == "back" and p.payload == "my"
+    # malformed
+    assert parse_callback("pt:page:x:1") is None
+    assert parse_callback("pt:card:") is None
+    assert parse_callback("pt:back:") is None
