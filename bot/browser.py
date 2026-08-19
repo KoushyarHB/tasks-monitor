@@ -383,8 +383,9 @@ class Browser:
             bits.append(f"📅 {esc(str(card['target_date'])[:10])}")
         if card.get("start_date"):
             bits.append(f"🚩 {esc(str(card['start_date'])[:10])}")
-        if card.get("estimate_point") is not None:
-            bits.append(f"⏱ {card['estimate_point']}")
+        ep = card.get("estimate_point")
+        if isinstance(ep, (int, float)) and not isinstance(ep, bool):
+            bits.append(f"⏱ {ep}")
         if bits:
             lines.append("      " + " · ".join(bits))
         cb = card.get("created_by", "")
@@ -393,7 +394,7 @@ class Browser:
         if desc:
             from .rich_text import html_to_telegram
             desc_tg = html_to_telegram(desc)
-            lines += ["", "<b>Description</b>", f"{desc_tg}"]
+            lines += ["", "<b>📝 Description</b>", f"{desc_tg}"]
 
         url = (f"{self.settings.plane_base_url}/{self.settings.plane_workspace}"
                f"/projects/{self.settings.plane_project_id}/issues/{issue_id}/")
@@ -402,22 +403,16 @@ class Browser:
             [{"text": "⬅️ Back to list", "callback_data": f"pt:back:{view}"}],
         ]
         text = "\n".join(lines)
+        # ALWAYS a single message: truncate with an ellipsis at the 4096 cap.
+        # Multiple messages are never acceptable (user requirement).
+        if len(text) > 4090:
+            text = text[:4090]
+            # cut at a line boundary for a clean ellipsis
+            cut = text.rfind("\n", 0, 4090)
+            if cut > 3500:
+                text = text[:cut]
+            text += "\n\n<i>… <b>truncated</b> — open in Plane for the full description</i>"
         if ctx and ctx.get("message_id") and self.edit:
-            # editMessageText caps at 4096 — if the full detail is longer,
-            # edit the list into a short version and send the rest as new msgs
-            if len(text) > 4090:
-                short = "\n".join(lines[:3]) + "\n\n<i>… long description below ⬇️</i>"
-                try:
-                    self.edit(ctx["chat_id"], ctx["message_id"], short, kb)
-                except Exception:
-                    self.send(text, kb)
-                    return
-                # send the full description (chunked) as a follow-up
-                from .messages import MAX_MSG
-                full = "\n".join(lines[3:]).strip() or text
-                for i in range(0, len(full), MAX_MSG - 200):
-                    self.send(full[i:i + MAX_MSG - 200])
-                return
             self.edit(ctx["chat_id"], ctx["message_id"], text, kb)
         else:
             self.send(text, kb)

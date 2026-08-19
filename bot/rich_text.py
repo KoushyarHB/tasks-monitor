@@ -101,8 +101,12 @@ class _TipTapToTelegram(HTMLParser):
 
     # ── helpers ─────────────────────────────────────
     def _emit_block_sep(self) -> None:
-        if self._out and not self._out[-1].endswith("\n"):
-            self._out.append("\n")
+        """Separate blocks with a blank line (much better markdown readability)."""
+        if self._out and not self._out[-1].endswith("\n\n"):
+            if self._out[-1].endswith("\n"):
+                self._out.append("\n")
+            else:
+                self._out.append("\n\n")
 
     def _emit_bullet(self) -> None:
         parent = self._list_stack[-1] if self._list_stack else "ul"
@@ -117,6 +121,9 @@ class _TipTapToTelegram(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._skip_depth:
             self._skip_depth += 1
+            return
+        if tag in ("br", "hr"):
+            self._emit_block_sep()
             return
         if tag in ("image", "img"):
             # images can't render inline — mark them
@@ -136,7 +143,9 @@ class _TipTapToTelegram(HTMLParser):
                 self._li_index.append(0)
                 self._emit_block_sep()
             elif tag == "li":
-                self._emit_block_sep()
+                # tight list: single newline between items, bullet on its own line
+                if self._out and not self._out[-1].endswith("\n"):
+                    self._out.append("\n")
                 self._emit_bullet()
             elif tag == "blockquote":
                 self._emit_block_sep()

@@ -98,3 +98,24 @@ def test_mention_handled():
     html = '<p>hi <mention data-id="@user"></mention> there</p>'
     out = html_to_telegram(html)
     assert "hi" in out and "there" in out
+
+
+def test_br_creates_line_break():
+    html = "<p>line one<br>line two</p>"
+    out = html_to_telegram(html)
+    assert "line one" in out and "line two" in out
+    assert "\n" in out  # br preserved as line break
+
+
+def test_blocks_separated_by_blank_line():
+    html = "<h2>What</h2><p>Body one</p><p>Body two</p>"
+    out = html_to_telegram(html)
+    # body paragraphs separated by blank line (better markdown)
+    assert "\n\nBody one" in out
+    assert "Body one\n\nBody two" in out
+
+
+def test_no_three_plus_newlines():
+    html = "<h2>What</h2><p>A</p><p>B</p><ul><li>x</li><li>y</li></ul>"
+    out = html_to_telegram(html)
+    assert "\n\n\n" not in out  # normalized
