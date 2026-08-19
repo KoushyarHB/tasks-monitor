@@ -45,43 +45,22 @@ class App:
 
     # ── message tracking (for 🧹 clear chat) ──────────
     def _send_recorded(self, text: str, kb) -> None:
-        results = self.tg.send_chunked(text, keyboard=kb)
-        for r in results:
-            mid = r.get("message_id")
-            if mid:
-                self._track_message(int(mid))
-
-    def _track_message(self, message_id: int) -> None:
-        path = os.path.expanduser("~/.hermes/state/standalone_msg_ids.json")
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            ids = []
-            if os.path.exists(path):
-                import json as _json
-                with open(path) as f:
-                    ids = _json.load(f)
-            if message_id not in ids:
-                ids.append(message_id)
-            import json as _json
-            with open(path, "w") as f:
-                _json.dump(ids[-500:], f)  # keep last 500
-        except Exception:
-            pass
-
-    def _load_tracked_ids(self) -> list[int]:
-        import json as _json
-        path = os.path.expanduser("~/.hermes/state/standalone_msg_ids.json")
-        try:
-            with open(path) as f:
-                return _json.load(f)
-        except Exception:
-            return []
+        # send_chunked → send_message → record_message: ids tracked internally
+        self.tg.send_chunked(text, keyboard=kb)
 
     def _clear_chat(self, chat_id, answer) -> None:
-        """Delete every tracked non-pinned message in the chat."""
+        """Delete EVERY non-pinned message the bot has seen in the chat.
+
+        Ids are recorded on every send path (send_message/send_chunked) plus
+        channel posts observed in getUpdates — so this clears watchdog
+        reports, browser lists, and user messages alike. Only the pinned
+        message (commands menu) survives; its id stays tracked so future
+        clears still skip it.
+        """
         pinned = self.tg.get_pinned_message_id(chat_id)
-        ids = self._load_tracked_ids()
+        ids = self.tg.tracked_ids()
         deleted = 0
+        failures = 0
         for mid in ids:
             if mid == pinned:
                 continue
@@ -89,18 +68,16 @@ class App:
                 self.tg.delete_message(chat_id, mid)
                 deleted += 1
             except TelegramError as exc:
+                failures += 1
                 logger.debug("clear: could not delete %s: %s", mid, exc)
-        # reset tracking (pinned menu survives)
+        # keep only the pinned id (or nothing) so old ids don't accumulate
+        self.tg.prune_ids([pinned] if pinned else [])
+        logger.info("clear chat: deleted %d, failed %d", deleted, failures)
+        toast = f"🧹 Cleared {deleted} messages (pinned kept)"
+        if failures:
+            toast += f" · {failures} skipped (too old / system)"
         try:
-            import json as _json
-            path = os.path.expanduser("~/.hermes/state/standalone_msg_ids.json")
-            with open(path, "w") as f:
-                _json.dump([], f)
-        except Exception:
-            pass
-        logger.info("clear chat: deleted %d messages", deleted)
-        try:
-            answer("", f"🧹 Cleared {deleted} messages (pinned kept)")
+            answer("", toast)
         except Exception:
             pass
 
@@ -137,6 +114,15 @@ class App:
             logger.info("✓ slash commands registered")
         except TelegramError as exc:
             logger.warning("setMyCommands failed: %s", exc)
+        # Idempotent pinning: if a menu is already pinned, don't re-post/re-pin
+        # (every restart used to spam a fresh "pinned a message" entry).
+        try:
+            existing = self.tg.get_pinned_message_id(None)
+            if existing is not None:
+                logger.info("✓ commands menu already pinned (id %s)", existing)
+                return
+        except TelegramError:
+            pass
         try:
             text = (
                 "🤖 <b>Plane Monitor — Commands</b>\n\n"
@@ -153,7 +139,6 @@ class App:
                 [{"text": "🧹 Clear chat (keep pinned)", "callback_data": "pt:clear"}],
             ]
             res = self.tg.send_message(text, keyboard=kb)
-            self._track_message(int(res["message_id"]))
             try:
                 self.tg.pin_message(None, res["message_id"])
                 logger.info("✓ commands menu pinned")
@@ -190,6 +175,8 @@ class App:
 
         # messages / channel posts
         msg = update.get("message") or update.get("channel_post") or {}
+        if msg.get("message_id") and msg.get("chat", {}).get("id") == self.settings.tg_chat_id:
+            self.tg.record_message(int(msg["message_id"]))
         text = msg.get("text", "")
         if text.startswith("/"):
             cmd = text.split()[0].lstrip("/").replace("-", "_")

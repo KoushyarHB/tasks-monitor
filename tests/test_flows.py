@@ -468,3 +468,39 @@ def test_clear_chat_invokes_callback():
     browser.handle(parse_callback("pt:clear"), query_id="q1",
                    ctx={"chat_id": -100, "message_id": 1})
     assert cleared and cleared[0][0] == -100
+
+
+# ── message tracking (every send is recorded) ─────────
+def test_send_message_records_id(tmp_path, monkeypatch):
+    import bot.telegram_client as tc
+    monkeypatch.setattr(tc.TelegramClient, "MSG_IDS_PATH", str(tmp_path / "ids.json"))
+    def handler(request):
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 77}})
+    client = tc.TelegramClient(token="tok", chat_id="-100x")
+    client._transport = httpx.MockTransport(handler)
+    client.send_message("hello")
+    assert 77 in client.tracked_ids()
+
+
+def test_send_chunked_records_all(tmp_path, monkeypatch):
+    import bot.telegram_client as tc
+    monkeypatch.setattr(tc.TelegramClient, "MSG_IDS_PATH", str(tmp_path / "ids.json"))
+    ids = iter([1, 2])
+    def handler(request):
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": next(ids)}})
+    client = tc.TelegramClient(token="tok", chat_id="-100x")
+    client._transport = httpx.MockTransport(handler)
+    client.send_chunked("a" * 5000)  # two chunks
+    tracked = client.tracked_ids()
+    assert 1 in tracked and 2 in tracked
+
+
+def test_prune_ids_keeps_only_pinned(tmp_path, monkeypatch):
+    import bot.telegram_client as tc
+    monkeypatch.setattr(tc.TelegramClient, "MSG_IDS_PATH", str(tmp_path / "ids.json"))
+    client = tc.TelegramClient(token="tok", chat_id="-100x")
+    client.record_message(1)
+    client.record_message(2)
+    client.record_message(57)
+    client.prune_ids([57])
+    assert client.tracked_ids() == [57]

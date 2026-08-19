@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -29,12 +30,51 @@ class TelegramRateLimitError(TelegramError):
 
 
 class TelegramClient:
+    MSG_IDS_PATH = os.path.expanduser("~/.hermes/state/standalone_msg_ids.json")
+
     def __init__(self, token: str, proxy: str = "", chat_id: str = "", timeout: float = 40.0):
         self.token = token
         self.proxy = proxy
         self.chat_id = chat_id
         self.timeout = timeout
         self._transport = None  # injectable for tests
+
+    # ── message-id tracking (for 🧹 clear chat) ───────
+    def record_message(self, message_id: int) -> None:
+        """Persist a message id so 🧹 clear can delete it later.
+
+        Every send path calls this — nothing the bot posts is ever lost.
+        """
+        try:
+            os.makedirs(os.path.dirname(self.MSG_IDS_PATH), exist_ok=True)
+            ids: list[int] = []
+            if os.path.exists(self.MSG_IDS_PATH):
+                try:
+                    with open(self.MSG_IDS_PATH) as f:
+                        ids = json.load(f)
+                except Exception:
+                    ids = []
+            if message_id not in ids:
+                ids.append(message_id)
+            with open(self.MSG_IDS_PATH, "w") as f:
+                json.dump(ids[-2000:], f)  # keep last 2000
+        except Exception:
+            pass
+
+    def tracked_ids(self) -> list[int]:
+        try:
+            with open(self.MSG_IDS_PATH) as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    def prune_ids(self, keep: list[int]) -> None:
+        """Rewrite the file keeping only the given ids (e.g. pinned)."""
+        try:
+            with open(self.MSG_IDS_PATH, "w") as f:
+                json.dump(keep[-2000:], f)
+        except Exception:
+            pass
 
     # ── low-level ─────────────────────────────────────
     def _api(self, method: str, max_retries: int = 3, **params) -> dict[str, Any]:
@@ -96,7 +136,11 @@ class TelegramClient:
         }
         if keyboard is not None:
             params["reply_markup"] = json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
-        return self._api("sendMessage", **params)
+        result = self._api("sendMessage", **params)
+        mid = result.get("message_id")
+        if mid:
+            self.record_message(int(mid))
+        return result
 
     def edit_message(
         self,
