@@ -1,0 +1,9 @@
+# Secrets — never commit!
+.env
+*.log
+__pycache__/
+*.pyc
+.venv/
+state.json
+bot.log
+.pytest_cache/
