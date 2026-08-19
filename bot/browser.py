@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import Settings
-from .messages import build_keyboard, esc, nav_keyboard
+from .messages import PRIORITY_DOT, build_keyboard, esc, nav_keyboard
 from .plane_client import PlaneClient
 
 logger = logging.getLogger(__name__)
@@ -257,14 +257,8 @@ class Browser:
         lines = [f"🎯 <b>Tasks</b> — {header} ({len(cards)})", ""]
         buttons: list[list[dict[str, str]]] = []
         for c in cards[:15]:
-            as_ids = [str(a) for a in (c.get("assignee_ids") or [])]
-            note = "🟦 " if me and me in as_ids else ""
-            a_names = ", ".join(members.get(i, i) for i in as_ids) or "Unassigned"
-            st = states.get(str(c.get("state_id", "")), c.get("state__group") or "?")
-            lines.append(
-                f"  {note}<b>[{c.get('sequence_id')}]</b> <code>{esc(c.get('name',''))}</code>\n"
-                f"       {esc(st)} · {esc(c.get('priority') or 'none')} · {esc(a_names)}"
-            )
+            lines.extend(_card_block(c, states, members, me))
+            lines.append("")
             url = (f"{self.settings.plane_base_url}/{self.settings.plane_workspace}"
                    f"/projects/{self.settings.plane_project_id}/issues/{c.get('id')}/")
             buttons.append([{"text": f"Card {c.get('sequence_id')}", "url": url}])
@@ -300,3 +294,33 @@ class Browser:
             return set()
         _, members, _ = self._data()
         return {uid for uid, label in members.items() if assignee_slug_of(label) == a_slug}
+
+
+# ── card rendering (shared with the monitor's change report) ──
+STATE_ICON = {
+    "Backlog": "📋",
+    "Todo": "📝",
+    "In Progress": "🚧",
+    "Done": "✅",
+    "Cancelled": "🚫",
+    "Reject": "⛔",
+    "Test": "🧪",
+    "Code Review": "👀",
+}
+
+
+def _card_block(c: dict[str, Any], states: dict[str, str], members: dict[str, str], me: str | None) -> list[str]:
+    """Render one task card as a list of lines (title + meta), nice typography."""
+    seq = c.get("sequence_id")
+    name = c.get("name", "")
+    st = states.get(str(c.get("state_id", "")), c.get("state__group") or "?")
+    prio = c.get("priority") or "none"
+    dot = PRIORITY_DOT.get(str(prio).lower(), "⚫")
+    as_ids = [str(a) for a in (c.get("assignee_ids") or [])]
+    a_names = ", ".join(members.get(i, i) for i in as_ids) or "Unassigned"
+    mine = "🟦 " if me and me in as_ids else ""
+
+    title = f"{mine}<b>[{seq}]</b> {esc(name)}"
+    icon = STATE_ICON.get(st, "▪️")
+    meta = f"      {icon} {esc(st)} · {dot} {esc(prio)} · 👤 {esc(a_names)}"
+    return [title, meta]

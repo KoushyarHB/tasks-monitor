@@ -81,9 +81,9 @@ def test_report_new_card_shows_details():
     c.is_mine = True
     r = build_report([c])
     text, _ = r
-    assert "Status: Backlog" in text
-    assert "Priority: high" in text
-    assert "Assignees: feizyr" in text
+    assert "📋 Backlog" in text
+    assert "🟠 high" in text
+    assert "👤 feizyr" in text
     assert "Status: New" not in text  # real details, not the placeholder
 
 

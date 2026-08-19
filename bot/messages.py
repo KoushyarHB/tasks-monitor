@@ -9,6 +9,16 @@ from .models import Change
 MAX_MSG = 4096
 PROJECT_URL_PLACEHOLDER = "{project_url}"
 
+# Priority color-dots (shared with browser card rendering)
+PRIORITY_DOT = {
+    "urgent": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "⚪",
+    "none": "⚫",
+    "": "⚫",
+}
+
 
 def esc(text: Any) -> str:
     """HTML-escape &, <, > AND quotes — spec requires all four characters."""
@@ -163,31 +173,32 @@ def _change_lines(c: Change, concise: bool = False) -> list[str]:
         head = f"   {tag} [{seq}] <code>{esc(c.name)}</code>"
         detail = _change_detail(c, short=True)
         return [head + (f" — {detail}" if detail else "")]
-    head = f"   {tag} <b>[{seq}]</b> <code>{esc(c.name)}</code>"
+    head = f"   {tag} <b>[{seq}]</b> {esc(c.name)}"
     lines = [head]
     detail = _change_detail(c)
     if detail:
         lines.append(f"       {detail}")
     if c.kind == "new" and c.created_by:
-        lines.append(f"       Created by {esc(c.created_by)} at {esc(c.created_at)}")
+        lines.append(f"       ✍️ Created by {esc(c.created_by)} at {esc(c.created_at)}")
     return lines
 
 
 def _change_detail(c: Change, short: bool = False) -> str:
     if c.kind == "new":
-        # actual card details (populated by the diff engine)
+        # actual card details (populated by the diff engine) with icons
         parts = []
         st = c.new or ""
         prio = c.old or ""
         if st and st != "?":
-            parts.append(f"Status: {esc(st)}")
+            parts.append(f"📋 {esc(st)}")
         if prio and prio != "none":
-            parts.append(f"Priority: {esc(prio)}")
+            dot = PRIORITY_DOT.get(str(prio).lower(), "⚫")
+            parts.append(f"{dot} {esc(prio)}")
         assignees = c.extra.get("assignees") or ""
         if isinstance(assignees, list):
             assignees = ", ".join(assignees)
         if assignees:
-            parts.append("Assignees: " + esc(assignees))
+            parts.append("👤 " + esc(assignees))
         return " · ".join(parts)
     if c.kind == "deleted":
         return "removed"
