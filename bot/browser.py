@@ -471,18 +471,17 @@ class Browser:
             lines[0] += f" · 📄 {page}/{total_pages}"
         lines.append("")
 
-        buttons: list[list[dict[str, str]]] = []
         for c in shown:
-            lines.extend(_card_block(c, states, members, me, labels))
+            url = (f"{self.settings.plane_base_url}/{self.settings.plane_workspace}"
+                   f"/projects/{self.settings.plane_project_id}/issues/{c.get('id')}/")
+            lines.extend(_card_block(c, states, members, me, labels, detail_url=True, plane_url=url))
             lines.append("")
-            iid = c.get("id", "")
-            seq = c.get("sequence_id", "")
-            buttons.append([{"text": f"🔍 [{seq}]", "callback_data": f"pt:card:{seq}:{view}"}])
         if not shown:
             lines.append("  (no cards match)")
         lines.append("")
-        lines.append("🔄 <i>Tap 🔍 for full details</i>")
+        lines.append("🔄 <i>Tap 🔍 next to a card for details</i>")
 
+        buttons: list[list[dict[str, str]]] = []
         # pagination row: ⏮️ ◀️ current ▶️ ⏭️ — disabled ends send noop
         if total_pages > 1:
             nav = []
@@ -551,6 +550,8 @@ def _card_block(
     members: dict[str, str],
     me: str | None,
     labels: dict[str, str] | None = None,
+    detail_url: bool = False,
+    plane_url: str = "",
 ) -> list[str]:
     """Render one task card as a list of lines (title + meta), nice typography."""
     seq = c.get("sequence_id")
@@ -564,6 +565,8 @@ def _card_block(
     draft = "📄 " if c.get("is_draft") else ""
 
     title = f"{mine}{draft}<b>[{seq}]</b> {esc(name)}"
+    if detail_url and plane_url:
+        title += f"  <a href=\"{plane_url}\">🔍</a>"
     icon = STATE_ICON.get(st, "▪️")
     meta = f"      {icon} {esc(st)} · {dot} {esc(prio)} · 👤 {esc(a_names)}"
 

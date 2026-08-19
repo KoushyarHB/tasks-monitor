@@ -379,23 +379,23 @@ def test_parse_new_stages():
 
 
 def test_all_list_callback_data_within_64_bytes():
-    """Regression: Telegram silently DROPS callback_data >64 bytes. Full UUIDs
-    in pt:card:<uuid>:<view> hit 71 bytes — must stay under with sequence_id."""
+    """Regression: Telegram silently DROPS callback_data >64 bytes."""
     issues = [issue(f"i{n}", n, f"Card {n}", state="s-backlog", assignees=[ME]) for n in range(1, 20)]
     browser, sent, _ = make_browser(issues)
     browser.handle(parse_callback("pt:run:a:koushyar_heidari:backlog"))
-    _, kb = sent[-1]
+    text, kb = sent[-1]
     for row in kb:
         for b in row:
             cd = b.get("callback_data")
             if cd:
                 assert len(cd) <= 64, f"callback_data too long ({len(cd)}): {cd}"
-    # verify the detail button uses sequence_id, not the UUID
+    # detail access is now an inline link next to each card — no button rows
     card_cbs = [b["callback_data"] for row in kb for b in row
                 if b.get("callback_data", "").startswith("pt:card:")]
-    assert card_cbs, "expected pt:card: buttons"
-    for cb in card_cbs:
-        assert ":i" not in cb  # no UUID-shaped segment
+    assert not card_cbs, "pt:card buttons removed (inline links instead)"
+    # every card title carries an inline 🔍 link to the Plane issue
+    assert '<a href="' in text and "🔍" in text
+    assert text.count("🔍") >= 15  # one per visible card
 
 
 # ── 5-button pagination ───────────────────────────────
