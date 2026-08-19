@@ -44,9 +44,12 @@ class Settings:
 
     @classmethod
     def from_env(cls, env: dict | None = None, dotenv_path: str | None = None) -> "Settings":
-        """Build Settings from env (optionally loading a .env file first)."""
-        if dotenv_path is not None:
-            _load_dotenv(dotenv_path)
+        """Build Settings from env, auto-loading the project .env file by default."""
+        if dotenv_path is None:
+            # default to <repo root>/.env (next to the bot package)
+            root = Path(os.path.dirname(os.path.abspath(__file__))).parent
+            dotenv_path = str(root / ".env")
+        _load_dotenv(dotenv_path)
         e = os.environ if env is None else env
 
         def s(key: str, default: str = "") -> str:
@@ -78,13 +81,22 @@ class Settings:
 
     @property
     def plane_headers(self) -> dict[str, str]:
-        """Cookie + CSRF headers required by Plane CE."""
-        headers = {"X-CSRFToken": self.plane_csrf_token}
+        """Cookie + CSRF headers required by Plane CE.
+
+        NOTE: Plane CE v1.x uses the cookie name `session-id` (with a DASH,
+        not `sessionid`), plus a Referer header — verified against a live
+        instance. Sending `sessionid` yields 401.
+        """
+        headers = {
+            "X-CSRFToken": self.plane_csrf_token,
+            "Referer": f"{self.plane_base_url}/{self.plane_workspace}/",
+            "User-Agent": "Mozilla/5.0 (Saba Tasks Monitor)",
+        }
         cookie_parts = []
         if self.plane_csrf_token:
             cookie_parts.append(f"csrftoken={self.plane_csrf_token}")
         if self.plane_session_id:
-            cookie_parts.append(f"sessionid={self.plane_session_id}")
+            cookie_parts.append(f"session-id={self.plane_session_id}")
         if cookie_parts:
             headers["Cookie"] = "; ".join(cookie_parts)
         return headers

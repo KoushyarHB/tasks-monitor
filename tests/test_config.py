@@ -31,11 +31,16 @@ def test_plane_headers():
     s = Settings.from_env({
         "PLANE_CSRF_TOKEN": "csrf123",
         "PLANE_SESSION_ID": "sess456",
+        "PLANE_BASE_URL": "https://plane.test",
+        "PLANE_WORKSPACE": "tms",
     })
     h = s.plane_headers
     assert h["X-CSRFToken"] == "csrf123"
     assert "csrftoken=csrf123" in h["Cookie"]
-    assert "sessionid=sess456" in h["Cookie"]
+    # Plane CE v1.x cookie name is session-id (dash), verified against live instance
+    assert "session-id=sess456" in h["Cookie"]
+    assert "sessionid=sess456" not in h["Cookie"]
+    assert h["Referer"] == "https://plane.test/tms/"
 
 
 def test_dotenv_loader(tmp_path):

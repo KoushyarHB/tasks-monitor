@@ -55,7 +55,12 @@ class PlaneClient:
         results: list[dict[str, Any]] = []
         cursor: str | None = None
         base = f"/api/workspaces/{self.workspace}/projects/{self.project_id}/issues/"
+        total_count: int | None = None
+        pages = 0
         while True:
+            pages += 1
+            if pages > 100:  # safety cap — never loop forever
+                break
             params: dict[str, Any] = {"per_page": 50}
             if cursor:
                 params["cursor"] = cursor
@@ -63,6 +68,12 @@ class PlaneClient:
             batch = data.get("results") if isinstance(data, dict) else data
             if not isinstance(batch, list):
                 raise PlaneApiError(f"Unexpected issues payload shape from {base}")
+            if total_count is None and isinstance(data, dict):
+                try:
+                    tc = data.get("total_count") or data.get("total_results") or 0
+                    total_count = int(tc) if tc else None
+                except (TypeError, ValueError):
+                    total_count = None
             for issue in batch:
                 iid = str(issue.get("id", ""))
                 if iid and iid not in seen:
@@ -70,17 +81,18 @@ class PlaneClient:
                     results.append(issue)
             if not isinstance(data, dict):
                 break  # flat list — single page
-            next_cursor = data.get("next_cursor")
-            has_more = data.get("has_more")
             next_page = data.get("next_page_results")
-            if next_cursor:
-                cursor = next_cursor
-                continue
-            if next_page is False or has_more is False:
+            # Plane v1's definitive stop signal: next_page_results False.
+            # NOTE: next_cursor is present on EVERY page (even the last), so it
+            # must be checked AFTER this flag.
+            if next_page is False:
                 break
-            if len(batch) < 50:
+            if total_count is not None and len(results) >= total_count:
                 break
-            break  # no pagination signal; assume single page
+            next_cursor = data.get("next_cursor")
+            if not next_cursor:
+                break
+            cursor = next_cursor
         return results
 
     def get_states(self) -> dict[str, str]:
@@ -97,7 +109,12 @@ class PlaneClient:
         return out
 
     def get_members(self) -> dict[str, str]:
-        """Return {user_id: display_name} — tolerant of member-object nesting."""
+        """Return {user_id: display_name} — handles both live shapes:
+        1. flat list: [{member: "<uuid>", role, ...}] — member is a plain UUID
+        2. nested:    [{member: {id, display_name, ...}}]
+        For shape 1 we can't resolve names here, so look up via workspace members
+        when available, else fall back to the raw id.
+        """
         path = f"/api/workspaces/{self.workspace}/projects/{self.project_id}/members/"
         try:
             data = self._get(path)
@@ -108,19 +125,44 @@ class PlaneClient:
         out: dict[str, str] = {}
         for m in batch or []:
             member = m.get("member") if isinstance(m, dict) else None
-            src = member if isinstance(member, dict) else m
-            if not isinstance(src, dict):
-                continue
-            uid = str(src.get("id", ""))
-            if not uid:
-                continue
-            name = (
-                src.get("display_name")
-                or src.get("username")
-                or src.get("first_name")
-                or "?"
-            )
-            out[uid] = name
+            if isinstance(member, dict):
+                # nested shape
+                uid = str(member.get("id", ""))
+                name = (
+                    member.get("display_name")
+                    or member.get("username")
+                    or member.get("first_name")
+                    or uid
+                )
+                if uid:
+                    out[uid] = name
+            elif member:
+                # flat shape — member is a plain UUID; resolve names via workspace members
+                uid = str(member)
+                if uid:
+                    out.setdefault(uid, uid)
+        # Try to resolve plain-UUID placeholders via the workspace members endpoint
+        unresolved = [uid for uid, name in out.items() if name == uid]
+        if unresolved:
+            try:
+                path3 = f"/api/workspaces/{self.workspace}/members/"
+                data3 = self._get(path3)
+                batch3 = data3.get("results") if isinstance(data3, dict) else data3
+                for m in batch3 or []:
+                    member = m.get("member") if isinstance(m, dict) else m
+                    if not isinstance(member, dict):
+                        continue
+                    uid = str(member.get("id", ""))
+                    name = (
+                        member.get("display_name")
+                        or member.get("username")
+                        or member.get("first_name")
+                        or member.get("email")
+                    )
+                    if uid and name and uid in out:
+                        out[uid] = name
+            except PlaneApiError:
+                pass
         return out
 
     def check_auth(self) -> bool:
