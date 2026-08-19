@@ -135,6 +135,44 @@ def test_flat_list_single_page():
     assert len(c.get_issues()) == 2
 
 
+def test_offset_pagination():
+    """Offset style: payload carries page/page_size; loop increments page."""
+    pages = iter([
+        {"results": [{"id": f"a{i}"} for i in range(50)], "page": 1, "page_size": 50, "count": 80},
+        {"results": [{"id": f"b{i}"} for i in range(30)], "page": 2, "page_size": 50, "count": 80},
+    ])
+    reqs = []
+
+    def handler(request):
+        reqs.append(str(request.url))
+        return _resp(next(pages))
+
+    c = make_client(handler)
+    issues = c.get_issues()
+    assert len(issues) == 80
+    assert any("page=2" in u for u in reqs)
+
+
+def test_next_url_pagination():
+    """Next-URL style: payload carries an absolute `next` URL."""
+    pages = iter([
+        {"results": [{"id": f"a{i}"} for i in range(50)],
+         "next": "https://plane.test/api/workspaces/tms/projects/proj1/issues/?per_page=50&cursor=p2"},
+        {"results": [{"id": f"b{i}"} for i in range(20)],
+         "next": None},
+    ])
+    reqs = []
+
+    def handler(request):
+        reqs.append(str(request.url))
+        return _resp(next(pages))
+
+    c = make_client(handler)
+    issues = c.get_issues()
+    assert len(issues) == 70
+    assert any("cursor=p2" in u for u in reqs)
+
+
 def test_states_normalized():
     def handler(request):
         return _resp({"results": [

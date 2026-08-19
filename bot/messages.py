@@ -11,7 +11,8 @@ PROJECT_URL_PLACEHOLDER = "{project_url}"
 
 
 def esc(text: Any) -> str:
-    return _html.escape(str(text if text is not None else ""), quote=False)
+    """HTML-escape &, <, > AND quotes — spec requires all four characters."""
+    return _html.escape(str(text if text is not None else ""), quote=True)
 
 
 def chunk_text(text: str, limit: int = MAX_MSG) -> list[str]:

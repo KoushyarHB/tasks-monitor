@@ -118,6 +118,12 @@ def test_report_escapes_html():
     assert "&lt;script&gt;" in text
 
 
+def test_esc_escapes_quotes():
+    from bot.messages import esc
+    assert esc('he said "hi" & <bye>') == "he said &quot;hi&quot; &amp; &lt;bye&gt;"
+    assert '"' not in esc('"')  # quotes MUST be escaped per spec
+
+
 def test_report_keyboard_rows_all_lists():
     c = ch(seq=5, name="Card")
     c.issue_id = "abc123"

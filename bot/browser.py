@@ -111,9 +111,15 @@ class Browser:
         elif stage == "help":
             self._help()
         else:
-            self.answer(query_id, "Unknown")
+            # unknown token — only a real callback can be answered
+            if query_id:
+                self.answer(query_id, "Unknown")
             return
-        self.answer(query_id, "OK")
+        # Answer the Telegram callback ONLY when invoked from a button press
+        # (slash commands / direct invocations pass no query_id — calling
+        # answerCallbackQuery with an empty id is an API error).
+        if query_id:
+            self.answer(query_id, "OK")
 
     # ── stage 1: start ────────────────────────────────
     def _start(self, which: str) -> None:

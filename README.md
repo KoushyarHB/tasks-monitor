@@ -82,7 +82,7 @@ journalctl -u saba-tasks-monitor -f
 pytest tests/ -v
 ```
 
-75 tests cover: diff classification, pagination dedup, keyboard shape validation (array-of-arrays + 64-byte callback cap), chunking at 4096, the `pt:run:a:`/`pt:run:s:` order disambiguation, poll-loop silent baseline, session-expiry propagation, and dispatch routing.
+89 tests cover: diff classification (incl. description changes + full new-card details), all three pagination styles (cursor / offset / next-URL) with dedup, keyboard shape validation (array-of-arrays + 64-byte callback cap), chunking at 4096, quote-safe HTML escaping, the `pt:run:a:`/`pt:run:s:` order disambiguation, strict pt: protocol rejection, poll-loop silent baseline, at-least-once delivery (state not advanced on send failure), 429 Retry-After + 5xx backoff, session-expiry propagation, slash-command routing (with no spurious callback answers), and dispatch routing with asserted sends.
 
 ---
 

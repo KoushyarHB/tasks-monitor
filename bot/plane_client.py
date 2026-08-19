@@ -50,21 +50,47 @@ class PlaneClient:
 
     # ── endpoints ─────────────────────────────────────
     def get_issues(self) -> list[dict[str, Any]]:
-        """Fetch ALL issues across pages, deduplicated by id (Plane returns dupes)."""
+        """Fetch ALL issues across pages, deduplicated by id (Plane returns dupes).
+
+        Supports the three pagination styles seen across Plane versions:
+          1. cursor:   ?per_page=50&cursor=<next_cursor>
+          2. offset:   ?per_page=50&page=<n>
+          3. next-url: payload carries an absolute `next` URL
+        """
         seen: set[str] = set()
         results: list[dict[str, Any]] = []
         cursor: str | None = None
-        base = f"/api/workspaces/{self.workspace}/projects/{self.project_id}/issues/"
+        page: int = 0
+        next_url: str | None = None
         total_count: int | None = None
         pages = 0
+        base = f"/api/workspaces/{self.workspace}/projects/{self.project_id}/issues/"
         while True:
             pages += 1
             if pages > 100:  # safety cap — never loop forever
                 break
-            params: dict[str, Any] = {"per_page": 50}
-            if cursor:
-                params["cursor"] = cursor
-            data = self._request("GET", base, params=params)
+            if next_url:
+                # absolute next URL from payload — request it directly
+                try:
+                    with httpx.Client(
+                        headers=self.headers, timeout=self.timeout,
+                        transport=self._transport,
+                    ) as client:
+                        r = client.get(next_url)
+                    if r.status_code in (401, 403):
+                        raise PlaneAuthError(f"Plane auth rejected ({r.status_code}) for next URL")
+                    if r.status_code >= 400:
+                        raise PlaneApiError(f"Plane API error {r.status_code} for next URL")
+                    data = r.json()
+                except httpx.HTTPError as exc:
+                    raise PlaneApiError(f"HTTP error for next URL: {exc}") from exc
+            else:
+                params: dict[str, Any] = {"per_page": 50}
+                if cursor:
+                    params["cursor"] = cursor
+                elif page:
+                    params["page"] = str(page)
+                data = self._request("GET", base, params=params)
             batch = data.get("results") if isinstance(data, dict) else data
             if not isinstance(batch, list):
                 raise PlaneApiError(f"Unexpected issues payload shape from {base}")
@@ -89,10 +115,21 @@ class PlaneClient:
                 break
             if total_count is not None and len(results) >= total_count:
                 break
+            # next-URL style
+            if data.get("next"):
+                next_url = data["next"]
+                continue
             next_cursor = data.get("next_cursor")
-            if not next_cursor:
-                break
-            cursor = next_cursor
+            if next_cursor:
+                cursor = next_cursor
+                continue
+            # offset style: page N present and we got a full page
+            if data.get("page") is not None or data.get("page_size") is not None:
+                if len(batch) < 50:
+                    break
+                page = (data.get("page") or page) + 1
+                continue
+            break  # no pagination signal; assume single page
         return results
 
     def get_states(self) -> dict[str, str]:
