@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot.messages import build_keyboard, build_report, chunk_text
-from bot.monitor import Change
+from bot.models import Change
 
 ME = "user-me"
 

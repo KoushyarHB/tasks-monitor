@@ -4,7 +4,7 @@ from __future__ import annotations
 import html as _html
 from typing import Any
 
-from .monitor import Change
+from .models import Change
 
 MAX_MSG = 4096
 PROJECT_URL_PLACEHOLDER = "{project_url}"

@@ -1,22 +1,18 @@
 """Watchdog diff engine — classify changes between snapshot and fresh issues."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from datetime import datetime, timezone
 from typing import Any
 
+from .config import Settings
+from .messages import build_report
+from .plane_client import PlaneAuthError, PlaneApiError, PlaneClient
+from .models import Change
+from .state import load_state, save_state
+from .telegram_client import TelegramClient, TelegramError
 
-@dataclass
-class Change:
-    issue_id: str
-    sequence_id: int | None
-    name: str
-    kind: str  # new | state | priority | assignees | name | deleted
-    old: str = ""
-    new: str = ""
-    is_mine: bool = False
-    created_by: str = ""
-    created_at: str = ""
-    extra: dict[str, Any] = field(default_factory=dict)
+logger = logging.getLogger(__name__)
 
 
 def _norm_assignees(issue: dict[str, Any] | None) -> list[str]:
@@ -110,3 +106,101 @@ def diff_issues(
             ))
 
     return changes
+
+
+def _build_snapshot(issues: list[dict[str, Any]], ts: str) -> dict[str, Any]:
+    """Build the persisted snapshot dict from fresh issues."""
+    return {
+        "issues": {
+            str(i["id"]): {
+                "sequence_id": i.get("sequence_id"),
+                "name": i.get("name"),
+                "state_id": i.get("state_id"),
+                "priority": i.get("priority"),
+                "assignee_ids": i.get("assignee_ids") or [],
+                "created_by": i.get("created_by"),
+                "created_at": i.get("created_at"),
+                "updated_at": i.get("updated_at"),
+            }
+            for i in issues
+        },
+        "_fetched_at": ts,
+    }
+
+
+def run_poll_once(
+    client: PlaneClient,
+    tg: TelegramClient,
+    settings: Settings,
+    state_path: str,
+) -> str | None:
+    """One watchdog cycle: fetch → diff → report → persist.
+
+    Returns the report text (or None when silent). Raises PlaneAuthError
+    when the session is rejected so the caller can alert.
+    """
+    states = client.get_states()
+    members = client.get_members()
+    issues = client.get_issues()
+
+    old = load_state(state_path)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    if old is None:
+        # FIRST RUN — baseline silently, never post "all cards are new"
+        new_snapshot = _build_snapshot(issues, now)
+        save_state(state_path, new_snapshot)
+        logger.info("baselined %d issues (first run, silent)", len(issues))
+        return None
+    changes = diff_issues(
+        old, issues,
+        states=states, members=members, me=settings.plane_user_id,
+    )
+
+    # persist the new snapshot regardless
+    new_snapshot = _build_snapshot(issues, now)
+    save_state(state_path, new_snapshot)
+
+    report = build_report(
+        changes,
+        focus=settings.plane_focus,
+        me=settings.plane_user_id,
+        base_url=settings.plane_base_url,
+        workspace=settings.plane_workspace,
+        project_id=settings.plane_project_id,
+        fetched_at=now,
+    )
+    if report is None:
+        return None
+    text, rows = report
+    tg.send_chunked(text, keyboard=rows)
+    logger.info("posted %d-change report (%d chars)", len(changes), len(text))
+    return text
+
+
+class PollLoop:
+    """Runs run_poll_once on an interval with auth-expiry alerting."""
+
+    def __init__(self, client: PlaneClient, tg: TelegramClient, settings: Settings):
+        self.client = client
+        self.tg = tg
+        self.settings = settings
+        self.stop = False
+
+    def tick(self) -> None:
+        try:
+            run_poll_once(
+                self.client, self.tg, self.settings, self.settings.state_file,
+            )
+        except PlaneAuthError as exc:
+            logger.error("Plane session expired: %s", exc)
+            try:
+                self.tg.send_message(
+                    "⚠️ <b>Plane session expired</b> — please re-authenticate "
+                    "(update PLANE_SESSION_ID / PLANE_CSRF_TOKEN)."
+                )
+            except TelegramError as te:
+                logger.error("failed to alert about session expiry: %s", te)
+        except PlaneApiError as exc:
+            logger.warning("transient Plane API error (skipping cycle): %s", exc)
+        except TelegramError as exc:
+            logger.error("Telegram delivery error: %s", exc)

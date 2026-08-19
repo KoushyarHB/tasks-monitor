@@ -4,7 +4,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bot.monitor import Change, diff_issues
+from bot.models import Change
+from bot.monitor import diff_issues
 
 ME = "user-me"
 
