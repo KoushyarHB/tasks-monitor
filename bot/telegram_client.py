@@ -141,6 +141,19 @@ class TelegramClient:
     def pin_message(self, chat_id: str | None, message_id: int | str) -> None:
         self._api("pinChatMessage", chat_id=chat_id or self.chat_id, message_id=str(message_id))
 
+    def delete_message(self, chat_id: str, message_id: int | str) -> None:
+        """Delete a message (bot needs delete permission in the chat)."""
+        self._api("deleteMessage", chat_id=chat_id, message_id=str(message_id))
+
+    def get_pinned_message_id(self, chat_id: str | None = None) -> int | None:
+        """Return the pinned message id of the chat, or None."""
+        try:
+            chat = self._api("getChat", chat_id=chat_id or self.chat_id)
+            pm = chat.get("pinned_message") or {}
+            return pm.get("message_id")
+        except TelegramError:
+            return None
+
     def set_my_commands(self, commands: list[dict[str, str]]) -> None:
         self._api("setMyCommands", commands=json.dumps(commands, ensure_ascii=False))
 

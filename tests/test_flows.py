@@ -396,3 +396,71 @@ def test_all_list_callback_data_within_64_bytes():
     assert card_cbs, "expected pt:card: buttons"
     for cb in card_cbs:
         assert ":i" not in cb  # no UUID-shaped segment
+
+
+# ── 5-button pagination ───────────────────────────────
+def test_pagination_5_buttons_first_page():
+    issues = [issue(f"i{n}", n, f"Card {n}", assignees=[ME]) for n in range(1, 40)]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:my"))
+    _, kb = sent[-1]
+    # find the pagination row (contains the page indicator)
+    pager = None
+    for row in kb:
+        labels = [b.get("text", "") for b in row]
+        if any("/3" in l for l in labels):
+            pager = row
+    assert pager is not None, "pager row missing"
+    labels = [b.get("text", "") for b in pager]
+    assert labels == ["⏮️", "◀️", "1/3", "▶️", "⏭️"]
+    cbs = [b.get("callback_data", "") for b in pager]
+    # first/prev disabled on page 1 (noop)
+    assert cbs[0] == "pt:noop" and cbs[1] == "pt:noop"
+    # next/last active
+    assert cbs[3] == "pt:page:my:2" and cbs[4] == "pt:page:my:3"
+
+
+def test_pagination_5_buttons_middle_page():
+    issues = [issue(f"i{n}", n, f"Card {n}", assignees=[ME]) for n in range(1, 40)]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:page:my:2"))
+    _, kb = sent[-1]
+    pager = next(row for row in kb
+                 if any(b.get("text", "") == "2/3" for b in row))
+    labels = [b.get("text", "") for b in pager]
+    assert labels == ["⏮️", "◀️", "2/3", "▶️", "⏭️"]
+    cbs = [b.get("callback_data", "") for b in pager]
+    assert cbs[0] == "pt:page:my:1"   # first active
+    assert cbs[1] == "pt:page:my:1"   # prev active
+    assert cbs[3] == "pt:page:my:3"   # next active
+    assert cbs[4] == "pt:page:my:3"   # last active
+
+
+def test_pagination_5_buttons_last_page():
+    issues = [issue(f"i{n}", n, f"Card {n}", assignees=[ME]) for n in range(1, 40)]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:page:my:3"))
+    _, kb = sent[-1]
+    pager = next(row for row in kb
+                 if any(b.get("text", "") == "3/3" for b in row))
+    cbs = [b.get("callback_data", "") for b in pager]
+    assert cbs[3] == "pt:noop" and cbs[4] == "pt:noop"  # next/last disabled
+
+
+# ── clear chat ────────────────────────────────────────
+def test_clear_chat_button_present():
+    issues = [issue("i1", 1, "A", assignees=[ME])]
+    browser, sent, _ = make_browser(issues)
+    browser.handle(parse_callback("pt:my"))
+    _, kb = sent[-1]
+    assert any(b.get("text", "").startswith("🧹") for row in kb for b in row)
+
+
+def test_clear_chat_invokes_callback():
+    cleared = []
+    issues = [issue("i1", 1, "A", assignees=[ME])]
+    browser, _, _ = make_browser(issues)
+    browser.clear_chat = lambda chat_id, answer: cleared.append((chat_id, answer))
+    browser.handle(parse_callback("pt:clear"), query_id="q1",
+                   ctx={"chat_id": -100, "message_id": 1})
+    assert cleared and cleared[0][0] == -100

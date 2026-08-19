@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 import time
@@ -35,11 +36,73 @@ class App:
         if self._browser is None:
             self._browser = Browser(
                 self.plane, self.settings,
-                send=lambda text, kb: self.tg.send_chunked(text, keyboard=kb),
+                send=lambda text, kb: self._send_recorded(text, kb),
                 answer=lambda qid, toast: self._safe_answer(qid, toast),
                 edit=lambda chat_id, mid, text, kb: self.tg.edit_message(text, chat_id, mid, keyboard=kb),
+                clear_chat=self._clear_chat,
             )
         return self._browser
+
+    # ── message tracking (for 🧹 clear chat) ──────────
+    def _send_recorded(self, text: str, kb) -> None:
+        results = self.tg.send_chunked(text, keyboard=kb)
+        for r in results:
+            mid = r.get("message_id")
+            if mid:
+                self._track_message(int(mid))
+
+    def _track_message(self, message_id: int) -> None:
+        path = os.path.expanduser("~/.hermes/state/standalone_msg_ids.json")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            ids = []
+            if os.path.exists(path):
+                import json as _json
+                with open(path) as f:
+                    ids = _json.load(f)
+            if message_id not in ids:
+                ids.append(message_id)
+            import json as _json
+            with open(path, "w") as f:
+                _json.dump(ids[-500:], f)  # keep last 500
+        except Exception:
+            pass
+
+    def _load_tracked_ids(self) -> list[int]:
+        import json as _json
+        path = os.path.expanduser("~/.hermes/state/standalone_msg_ids.json")
+        try:
+            with open(path) as f:
+                return _json.load(f)
+        except Exception:
+            return []
+
+    def _clear_chat(self, chat_id, answer) -> None:
+        """Delete every tracked non-pinned message in the chat."""
+        pinned = self.tg.get_pinned_message_id(chat_id)
+        ids = self._load_tracked_ids()
+        deleted = 0
+        for mid in ids:
+            if mid == pinned:
+                continue
+            try:
+                self.tg.delete_message(chat_id, mid)
+                deleted += 1
+            except TelegramError as exc:
+                logger.debug("clear: could not delete %s: %s", mid, exc)
+        # reset tracking (pinned menu survives)
+        try:
+            import json as _json
+            path = os.path.expanduser("~/.hermes/state/standalone_msg_ids.json")
+            with open(path, "w") as f:
+                _json.dump([], f)
+        except Exception:
+            pass
+        logger.info("clear chat: deleted %d messages", deleted)
+        try:
+            answer("", f"🧹 Cleared {deleted} messages (pinned kept)")
+        except Exception:
+            pass
 
     def _safe_answer(self, qid: str, toast: str) -> None:
         try:
@@ -87,8 +150,10 @@ class App:
                  {"text": "🗂 By State", "callback_data": "pt:start:state"}],
                 [{"text": "🟦 My Tasks", "callback_data": "pt:my"},
                  {"text": "❓ Help", "callback_data": "pt:help"}],
+                [{"text": "🧹 Clear chat (keep pinned)", "callback_data": "pt:clear"}],
             ]
             res = self.tg.send_message(text, keyboard=kb)
+            self._track_message(int(res["message_id"]))
             try:
                 self.tg.pin_message(None, res["message_id"])
                 logger.info("✓ commands menu pinned")

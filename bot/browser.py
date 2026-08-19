@@ -79,6 +79,12 @@ def parse_callback(data: str) -> ParsedCallback | None:
         if not tail:
             return None
         return ParsedCallback(stage="back", payload=tail)
+    if head == "clear":
+        if tail:
+            return None
+        return ParsedCallback(stage="clear", payload="")
+    if head == "noop":
+        return ParsedCallback(stage="noop", payload="")
     if head == "start":
         if tail not in ("assignee", "state"):
             return None
@@ -102,12 +108,14 @@ def rows_from(items: list[tuple[str, str]], prefix: str) -> list[list[dict[str, 
 class Browser:
     """Stateless per-callback handler; refetches Plane data (60s cache)."""
 
-    def __init__(self, client: PlaneClient, settings: Settings, send: Callable, answer: Callable, edit: Callable | None = None):
+    def __init__(self, client: PlaneClient, settings: Settings, send: Callable, answer: Callable,
+                 edit: Callable | None = None, clear_chat: Callable | None = None):
         self.client = client
         self.settings = settings
         self.send = send          # send(text, keyboard) -> None
         self.answer = answer      # answer(query_id, toast) -> None
         self.edit = edit          # edit(chat_id, message_id, text, keyboard) -> None
+        self.clear_chat = clear_chat  # clear_chat(chat_id, answer) -> None
         self._cache: dict[str, Any] = {}
 
     # ── cached data ───────────────────────────────────
@@ -145,6 +153,10 @@ class Browser:
             self._card(parsed.payload, ctx=ctx)
         elif stage == "back":
             self._back(parsed.payload, ctx=ctx)
+        elif stage == "clear":
+            self._clear(ctx=ctx)
+        elif stage == "noop":
+            pass  # disabled-button placeholder (answered with a toast)
         elif stage == "my":
             self._my(ctx=ctx)
         elif stage == "help":
@@ -413,6 +425,13 @@ class Browser:
         else:
             self._start("assignee")
 
+    # ── clear chat ────────────────────────────────────
+    def _clear(self, ctx: dict | None = None) -> None:
+        """🧹 Delete every non-pinned message the bot has seen in the chat."""
+        chat_id = (ctx or {}).get("chat_id") or self.settings.tg_chat_id
+        if self.clear_chat:
+            self.clear_chat(chat_id, self.answer)
+
     # ── help ──────────────────────────────────────────
     def _help(self) -> None:
         text = (
@@ -429,6 +448,7 @@ class Browser:
             [{"text": "👤 By Assignee", "callback_data": "pt:start:assignee"},
              {"text": "🗂 By State", "callback_data": "pt:start:state"}],
             [{"text": "🟦 My Tasks", "callback_data": "pt:my"}],
+            [{"text": "🧹 Clear chat (keep pinned)", "callback_data": "pt:clear"}],
         ]
         self.send(text, kb)
 
@@ -463,17 +483,22 @@ class Browser:
         lines.append("")
         lines.append("🔄 <i>Tap 🔍 for full details</i>")
 
-        # pagination row
+        # pagination row: ⏮️ ◀️ current ▶️ ⏭️ — disabled ends send noop
         if total_pages > 1:
             nav = []
-            if page > 1:
-                nav.append({"text": "◀️", "callback_data": f"pt:page:{view}:{page - 1}"})
-            nav.append({"text": f"{page}/{total_pages}", "callback_data": "pt:help"})
-            if page < total_pages:
-                nav.append({"text": "▶️", "callback_data": f"pt:page:{view}:{page + 1}"})
+            first_cb = "pt:noop" if page == 1 else f"pt:page:{view}:1"
+            prev_cb = "pt:noop" if page == 1 else f"pt:page:{view}:{page - 1}"
+            next_cb = "pt:noop" if page == total_pages else f"pt:page:{view}:{page + 1}"
+            last_cb = "pt:noop" if page == total_pages else f"pt:page:{view}:{total_pages}"
+            nav.append({"text": "⏮️", "callback_data": first_cb})
+            nav.append({"text": "◀️", "callback_data": prev_cb})
+            nav.append({"text": f"{page}/{total_pages}", "callback_data": "pt:noop"})
+            nav.append({"text": "▶️", "callback_data": next_cb})
+            nav.append({"text": "⏭️", "callback_data": last_cb})
             buttons.append(nav)
-        # bottom nav — one slim row only
+        # bottom nav — one slim row + big clear button
         buttons.append(nav_keyboard()[0])
+        buttons.append([{"text": "🧹 Clear chat (keep pinned)", "callback_data": "pt:clear"}])
 
         text = "\n".join(lines)
         if ctx and ctx.get("message_id") and self.edit:
