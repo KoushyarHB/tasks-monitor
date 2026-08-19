@@ -39,10 +39,23 @@ class App:
                 self.plane, self.settings,
                 send=lambda text, kb: self._send_recorded(text, kb),
                 answer=lambda qid, toast: self._safe_answer(qid, toast),
-                edit=lambda chat_id, mid, text, kb: self.tg.edit_message(text, chat_id, mid, keyboard=kb),
+                edit=self._edit_message,
                 clear_chat=self._clear_chat,
             )
         return self._browser
+
+    def _edit_message(self, chat_id, message_id, text, kb) -> None:
+        """editMessageText wrapper that NEVER overwrites the pinned menu.
+
+        Tapping a button (e.g. 🟦 My Tasks) on the pinned menu must not turn
+        the pinned message into a task list — the menu stays pinned forever.
+        """
+        menu_id = self._load_menu_id()
+        if menu_id is not None and int(message_id) == menu_id:
+            logger.info("refusing to edit pinned menu #%s — sending new message", menu_id)
+            self._send_recorded(text, kb)
+            return
+        self.tg.edit_message(text, chat_id, message_id, keyboard=kb)
 
     # ── message tracking (for 🧹 clear chat) ──────────
     def _send_recorded(self, text: str, kb) -> None:

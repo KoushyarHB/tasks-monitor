@@ -565,3 +565,40 @@ def test_ensure_pinned_menu_recreates_when_persisted_gone(tmp_path, monkeypatch)
     mid = app.ensure_pinned_menu()
     assert mid == 99  # fresh menu posted
     assert app._load_menu_id() == 99  # new id persisted
+
+
+def test_edit_message_never_touches_pinned_menu(tmp_path, monkeypatch):
+    """Tapping a button (e.g. 🟦 My Tasks) on the pinned menu must NOT edit
+    the pinned message — it sends a new message instead."""
+    from bot.main import App
+    from bot.config import Settings
+    monkeypatch.setattr(App, "MENU_ID_PATH", str(tmp_path / "menu_id.json"))
+    (tmp_path / "menu_id.json").write_text("77")  # pinned menu id
+    edits = []
+    sends = []
+    class FakeTG:
+        def edit_message(self, text, chat_id, message_id, keyboard=None, **kw):
+            edits.append(int(message_id))
+        def send_chunked(self, text, keyboard=None, **kw):
+            sends.append(1)
+            return [{"message_id": 100}]
+        def send_message(self, *a, **k):
+            sends.append(1)
+            return {"message_id": 100}
+    settings = Settings(
+        plane_base_url="https://x", plane_workspace="w", plane_project_id="p",
+        plane_csrf_token="c", plane_session_id="s", plane_user_id="u",
+    )
+    app = App.__new__(App)
+    app.tg = FakeTG()
+    app.settings = settings
+    app.MENU_ID_PATH = str(tmp_path / "menu_id.json")
+    app._browser = None
+    # editing the pinned menu (77) must be refused → send instead
+    app._edit_message(-100, 77, "tasks list", [])
+    assert edits == []          # pinned menu never edited
+    assert sends == [1]         # new message sent instead
+    # editing a normal message (123) still works
+    app._edit_message(-100, 123, "detail", [])
+    assert edits == [123]
+    assert len(sends) == 1      # no extra send
