@@ -8,11 +8,14 @@ import signal
 import threading
 import time
 
+import waitress
+
 from .browser import Browser, parse_callback
 from .config import Settings
 from .monitor import PollLoop
 from .plane_client import PlaneAuthError, PlaneClient
 from .telegram_client import TelegramClient, TelegramError
+from .webhook_server import create_app
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,7 @@ class App:
         self.poll_loop = PollLoop(self.plane, self.tg, settings)
         self.stop = False
         self._browser: Browser | None = None
+        self._webhook_server = None
 
     @property
     def browser(self) -> Browser:
@@ -279,14 +283,24 @@ class App:
 
     # ── poll loop ─────────────────────────────────────
     def run_poll_loop(self) -> None:
-        interval = self.settings.poll_interval_seconds
-        while not self.stop:
-            self.poll_loop.tick()
-            # sleep in small slices so stop() is responsive
-            for _ in range(int(interval)):
-                if self.stop:
-                    return
-                time.sleep(1)
+        self.poll_loop.run()
+
+    # ── webhook server ────────────────────────────────
+    def run_webhook_server(self) -> None:
+        """Serve the Plane webhook receiver (waitress WSGI server, thread)."""
+        app = create_app(self.settings, self.poll_loop.kick)
+        server = waitress.create_server(
+            app,
+            host=self.settings.webhook_host,
+            port=self.settings.webhook_port,
+        )
+        self._webhook_server = server
+        logger.info(
+            "✓ webhook server on %s:%s (path %s)",
+            self.settings.webhook_host, self.settings.webhook_port,
+            self.settings.webhook_path,
+        )
+        server.run()
 
     # ── lifecycle ─────────────────────────────────────
     def start(self) -> None:
@@ -296,13 +310,18 @@ class App:
         # first poll immediately (baselines silently), then the loops
         t_poll = threading.Thread(target=self.run_poll_loop, daemon=True, name="poll")
         t_upd = threading.Thread(target=self.run_update_loop, daemon=True, name="updates")
+        t_webhook = threading.Thread(target=self.run_webhook_server, daemon=True, name="webhook")
         t_poll.start()
         t_upd.start()
+        t_webhook.start()
         logger.info("both loops running (poll=%ss)", self.settings.poll_interval_seconds)
 
         def _sig(signum, frame):
             logger.info("signal %s received — shutting down", signum)
             self.stop = True
+            self.poll_loop.stop()
+            if self._webhook_server is not None:
+                self._webhook_server.close()
 
         signal.signal(signal.SIGTERM, _sig)
         signal.signal(signal.SIGINT, _sig)

@@ -1,0 +1,6 @@
+# Reverse proxy for the Plane webhook receiver (TLS via automatic HTTPS).
+# Give the owner:  https://<YOUR_DOMAIN>/webhook/plane
+# Replace the domain below, then:  caddy run --config deploy/Caddyfile
+plane-webhook.example.com {
+	reverse_proxy 127.0.0.1:8080
+}

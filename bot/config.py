@@ -41,6 +41,11 @@ class Settings:
     tg_proxy: str = ""
     poll_interval_seconds: int = 300
     state_file: str = "./state.json"
+    webhook_host: str = "127.0.0.1"
+    webhook_port: int = 8080
+    webhook_path: str = "/webhook/plane"
+    plane_webhook_secret: str = ""
+    webhook_min_interval_seconds: int = 10
 
     @classmethod
     def from_env(cls, env: dict | None = None, dotenv_path: str | None = None) -> "Settings":
@@ -64,6 +69,16 @@ class Settings:
         if focus not in ("mine", "all"):
             focus = "mine"
 
+        try:
+            wh_port = int(s("WEBHOOK_PORT", "8080"))
+        except ValueError:
+            wh_port = 8080
+
+        try:
+            wh_min_interval = int(s("WEBHOOK_MIN_INTERVAL_SECONDS", "10"))
+        except ValueError:
+            wh_min_interval = 10
+
         return cls(
             plane_base_url=s("PLANE_BASE_URL").rstrip("/"),
             plane_workspace=s("PLANE_WORKSPACE"),
@@ -77,6 +92,11 @@ class Settings:
             tg_proxy=s("TG_PROXY"),
             poll_interval_seconds=max(30, poll),
             state_file=s("STATE_FILE", "./state.json"),
+            webhook_host=s("WEBHOOK_HOST", "127.0.0.1"),
+            webhook_port=wh_port,
+            webhook_path=s("WEBHOOK_PATH", "/webhook/plane"),
+            plane_webhook_secret=s("PLANE_WEBHOOK_SECRET"),
+            webhook_min_interval_seconds=max(1, wh_min_interval),
         )
 
     @property

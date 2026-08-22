@@ -13,6 +13,11 @@ def test_defaults_with_empty_env():
     assert s.poll_interval_seconds == 300
     assert s.plane_focus == "mine"
     assert s.state_file == "./state.json"
+    assert s.webhook_host == "127.0.0.1"
+    assert s.webhook_port == 8080
+    assert s.webhook_path == "/webhook/plane"
+    assert s.plane_webhook_secret == ""
+    assert s.webhook_min_interval_seconds == 10
 
 
 def test_type_coercion_poll_interval():
@@ -20,6 +25,24 @@ def test_type_coercion_poll_interval():
     assert s.poll_interval_seconds == 60
     s = Settings.from_env({"POLL_INTERVAL_SECONDS": "not-a-number"})
     assert s.poll_interval_seconds == 300
+
+
+def test_webhook_env_parsing():
+    s = Settings.from_env({
+        "WEBHOOK_PORT": "9000",
+        "WEBHOOK_HOST": "0.0.0.0",
+        "WEBHOOK_PATH": "/hooks/plane",
+        "PLANE_WEBHOOK_SECRET": "abc123",
+        "WEBHOOK_MIN_INTERVAL_SECONDS": "2",
+    })
+    assert s.webhook_port == 9000
+    assert s.webhook_host == "0.0.0.0"
+    assert s.webhook_path == "/hooks/plane"
+    assert s.plane_webhook_secret == "abc123"
+    assert s.webhook_min_interval_seconds == 2
+    s = Settings.from_env({"WEBHOOK_PORT": "bogus", "WEBHOOK_MIN_INTERVAL_SECONDS": "bogus"})
+    assert s.webhook_port == 8080
+    assert s.webhook_min_interval_seconds == 10
 
 
 def test_focus_normalized():

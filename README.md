@@ -54,6 +54,11 @@ Copy `.env.example` → `.env` and fill in:
 | `TG_PROXY` | optional SOCKS5/HTTP proxy for Telegram (required in some networks) |
 | `POLL_INTERVAL_SECONDS` | watchdog interval (default 300) |
 | `STATE_FILE` | snapshot path (default `./state.json`) |
+| `PLANE_WEBHOOK_SECRET` | shared secret for Plane webhooks (HMAC-SHA256) |
+| `WEBHOOK_HOST` | bind address for the webhook server (default `127.0.0.1`) |
+| `WEBHOOK_PORT` | port (default `8080`) |
+| `WEBHOOK_PATH` | endpoint path (default `/webhook/plane`) |
+| `WEBHOOK_MIN_INTERVAL_SECONDS` | debounce: min gap between polls when webhooks arrive in bursts (default 10) |
 
 ---
 
@@ -76,13 +81,36 @@ journalctl -u saba-tasks-monitor -f
 
 ---
 
+## Plane webhook (near-real-time updates)
+
+The watchdog also accepts **push events** from Plane, so reports fire as soon as
+an issue changes instead of waiting for the next poll. The periodic poll stays
+enabled as a self-healing fallback.
+
+Setup requires the **workspace owner** (the webhook UI is owner-only):
+
+1. In Plane → **Workspace Settings → Webhooks → Add webhook**
+2. URL: `https://<your-public-host>/webhook/plane`
+3. Secret: the same value as `PLANE_WEBHOOK_SECRET` in `.env`
+4. Enable the **Issue** events (created / updated / deleted) and save
+
+Every request is verified with `X-Plane-Signature` (HMAC-SHA256 of the raw body);
+unauthenticated calls get `403`. The server listens on `127.0.0.1:8080` — expose it
+through a TLS reverse proxy, e.g. the bundled Caddy config:
+
+```bash
+caddy run --config deploy/Caddyfile
+```
+
+---
+
 ## Testing
 
 ```bash
 pytest tests/ -v
 ```
 
-89 tests cover: diff classification (incl. description changes + full new-card details), all three pagination styles (cursor / offset / next-URL) with dedup, keyboard shape validation (array-of-arrays + 64-byte callback cap), chunking at 4096, quote-safe HTML escaping, the `pt:run:a:`/`pt:run:s:` order disambiguation, strict pt: protocol rejection, poll-loop silent baseline, at-least-once delivery (state not advanced on send failure), 429 Retry-After + 5xx backoff, session-expiry propagation, slash-command routing (with no spurious callback answers), and dispatch routing with asserted sends.
+143 tests cover: diff classification (incl. description changes + full new-card details), all three pagination styles (cursor / offset / next-URL) with dedup, keyboard shape validation (array-of-arrays + 64-byte callback cap), chunking at 4096, quote-safe HTML escaping, the `pt:run:a:`/`pt:run:s:` order disambiguation, strict pt: protocol rejection, poll-loop silent baseline, at-least-once delivery (state not advanced on send failure), 429 Retry-After + 5xx backoff, session-expiry propagation, slash-command routing (with no spurious callback answers), dispatch routing with asserted sends, and webhook HMAC verification / routing / project filtering / body-size cap.
 
 ---
 

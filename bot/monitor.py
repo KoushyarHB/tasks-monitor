@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -227,15 +229,30 @@ def run_poll_once(
 
 
 class PollLoop:
-    """Runs run_poll_once on an interval with auth-expiry alerting."""
+    """Runs run_poll_once on an interval, woken early by webhook kicks (debounced).
+
+    The loop thread is the ONLY thread that fetches/diffs/delivers, so a webhook
+    kick never races with a scheduled poll over state.json or Telegram delivery.
+    """
 
     def __init__(self, client: PlaneClient, tg: TelegramClient, settings: Settings):
         self.client = client
         self.tg = tg
         self.settings = settings
         self.stop = False
+        self._wake = threading.Event()
+        self._last_run = 0.0
 
-    def tick(self) -> None:
+    def kick(self) -> None:
+        """Wake the loop early — called from the webhook server thread."""
+        self._wake.set()
+
+    def stop(self) -> None:
+        """Signal shutdown; unblocks an in-progress wait immediately."""
+        self.stop = True
+        self._wake.set()
+
+    def _run_cycle(self) -> None:
         try:
             run_poll_once(
                 self.client, self.tg, self.settings, self.settings.state_file,
@@ -253,3 +270,20 @@ class PollLoop:
             logger.warning("transient Plane API error (skipping cycle): %s", exc)
         except TelegramError as exc:
             logger.error("Telegram delivery error: %s", exc)
+        except Exception as exc:
+            logger.exception("poll cycle crashed: %s", exc)
+
+    def run(self) -> None:
+        """Loop body: run a cycle, then wait for a webhook kick or the interval.
+
+        Kicks collapse via the debounce window — a burst of webhook events
+        triggers at most one poll per WEBHOOK_MIN_INTERVAL_SECONDS.
+        """
+        interval = self.settings.poll_interval_seconds
+        debounce = self.settings.webhook_min_interval_seconds
+        while not self.stop:
+            if time.monotonic() - self._last_run >= debounce:
+                self._run_cycle()
+                self._last_run = time.monotonic()
+            self._wake.wait(timeout=interval)
+            self._wake.clear()
