@@ -239,17 +239,26 @@ class PollLoop:
         self.client = client
         self.tg = tg
         self.settings = settings
-        self.stop = False
+        self._stop = False
         self._wake = threading.Event()
+        self._pending = 0          # un-consumed kicks (never lose a wake)
+        self._pending_lock = threading.Lock()
         self._last_run = 0.0
 
     def kick(self) -> None:
-        """Wake the loop early — called from the webhook server thread."""
+        """Wake the loop early — called from the webhook server thread.
+
+        Counts pending kicks so a wake that arrives mid-cycle or inside the
+        debounce window is NEVER lost (it triggers a run as soon as the
+        cooldown allows, instead of being swallowed by the 300s wait).
+        """
+        with self._pending_lock:
+            self._pending += 1
         self._wake.set()
 
     def stop(self) -> None:
         """Signal shutdown; unblocks an in-progress wait immediately."""
-        self.stop = True
+        self._stop = True
         self._wake.set()
 
     def _run_cycle(self) -> None:
@@ -277,13 +286,35 @@ class PollLoop:
         """Loop body: run a cycle, then wait for a webhook kick or the interval.
 
         Kicks collapse via the debounce window — a burst of webhook events
-        triggers at most one poll per WEBHOOK_MIN_INTERVAL_SECONDS.
+        triggers at most one poll per WEBHOOK_MIN_INTERVAL_SECONDS — but a
+        kick is NEVER dropped: if one arrives inside the cooldown, the loop
+        waits only until the cooldown expires, then runs (no full-interval
+        sleep with a swallowed wake).
         """
         interval = self.settings.poll_interval_seconds
         debounce = self.settings.webhook_min_interval_seconds
-        while not self.stop:
-            if time.monotonic() - self._last_run >= debounce:
+        while not self._stop:
+            # consume one pending kick (if any) and run, respecting debounce
+            with self._pending_lock:
+                has_pending = self._pending > 0
+            since = time.monotonic() - self._last_run
+            if has_pending and since >= debounce:
+                with self._pending_lock:
+                    self._pending -= 1
                 self._run_cycle()
                 self._last_run = time.monotonic()
-            self._wake.wait(timeout=interval)
+                continue
+            # scheduled tick? run regardless of pending kicks
+            if since >= interval:
+                self._run_cycle()
+                self._last_run = time.monotonic()
+                continue
+            # nothing to do yet — wait until the next event/time.
+            # If a kick is pending but we're inside the debounce window,
+            # only wait the cooldown remainder (so the kick fires ASAP).
+            if has_pending:
+                wait_for = max(0.1, debounce - since)
+            else:
+                wait_for = max(0.1, min(interval - since, interval))
+            self._wake.wait(timeout=wait_for)
             self._wake.clear()

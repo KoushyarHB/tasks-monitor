@@ -173,3 +173,43 @@ def test_state_not_advanced_when_delivery_fails(tmp_path):
     result = run_poll_once(plane, tg, settings, state_path)
     assert result is not None
     assert "Todo → Done" in result
+
+
+# ── wake never lost (regression: debounce window swallowing kicks) ──
+def test_wake_during_debounce_never_lost():
+    """A kick arriving inside the debounce window must trigger a run as soon
+    as the cooldown expires — never be swallowed by a full-interval wait."""
+    import time as _time
+    import threading
+    from bot.monitor import PollLoop
+
+    class FakeClient:
+        def get_states(self): return {}
+        def get_members(self): return {}
+        def get_issues(self): return []
+
+    class FakeTG:
+        def send_message(self, *a, **k): pass
+        def send_chunked(self, *a, **k): return []
+
+    settings = Settings(
+        plane_base_url="https://x", plane_workspace="w", plane_project_id="p",
+        plane_csrf_token="c", plane_session_id="s", plane_user_id="u",
+        poll_interval_seconds=300, webhook_min_interval_seconds=0.2,
+    )
+    loop = PollLoop(FakeClient(), FakeTG(), settings)
+    cycles = []
+    loop._run_cycle = lambda: cycles.append(_time.monotonic())
+
+    t = threading.Thread(target=loop.run, daemon=True)
+    t.start()
+    _time.sleep(0.3)          # first scheduled cycle runs
+    _time.sleep(0.3)
+    n0 = len(cycles)
+    loop.kick()               # wake during... cooldown or wait
+    _time.sleep(0.5)          # debounce is 0.2s → kick fires quickly
+    n1 = len(cycles)
+    loop.stop()
+    t.join(timeout=2)
+    # the kick must have produced a cycle quickly (not swallowed for 300s)
+    assert n1 >= n0 + 1, f"kick swallowed: cycles {n0} → {n1}"
