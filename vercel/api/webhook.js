@@ -55,21 +55,23 @@ export default async function handler(req, res) {
   // Valid event → wake the home bot via Telegram (the always-on channel).
   const wakeToken = process.env.WAKE_BOT_TOKEN;
   const chatId = process.env.TG_CHAT_ID;
-  if (wakeToken && chatId) {
-    try {
-      await fetch(`https://api.telegram.org/bot${wakeToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: '⚡wake:plane',
-          disable_notification: true,
-        }),
-      });
-    } catch (err) {
-      console.error('wake delivery failed:', err);
-      return res.status(502).json({ error: 'wake failed' });
-    }
+  if (!wakeToken || !chatId) {
+    console.error('wake env missing', { wakeToken: !!wakeToken, chatId: !!chatId });
+    return res.status(500).json({ error: 'wake not configured' });
+  }
+  try {
+    await fetch(`https://api.telegram.org/bot${wakeToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: '⚡wake:plane',
+        disable_notification: true,
+      }),
+    });
+  } catch (err) {
+    console.error('wake delivery failed:', err);
+    return res.status(502).json({ error: 'wake failed' });
   }
 
   return res.status(200).json({ ok: true });
