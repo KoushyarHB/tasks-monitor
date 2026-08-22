@@ -60,7 +60,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'wake not configured' });
   }
   try {
-    await fetch(`https://api.telegram.org/bot${wakeToken}/sendMessage`, {
+    const wakeRes = await fetch(`https://api.telegram.org/bot${wakeToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -69,6 +69,16 @@ export default async function handler(req, res) {
         disable_notification: true,
       }),
     });
+    // fetch() resolves even on HTTP 400/401 — Telegram's body says ok:false.
+    // Check the real response so a bad token/chat id surfaces as an error.
+    const wakeBody = await wakeRes.json().catch(() => ({}));
+    if (!wakeRes.ok || wakeBody.ok !== true) {
+      console.error('wake rejected by Telegram:', wakeRes.status, wakeBody);
+      return res.status(502).json({
+        error: 'wake rejected',
+        detail: wakeBody.description || `HTTP ${wakeRes.status}`,
+      });
+    }
   } catch (err) {
     console.error('wake delivery failed:', err);
     return res.status(502).json({ error: 'wake failed' });
