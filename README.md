@@ -94,6 +94,9 @@ Setup requires the **workspace owner** (the webhook UI is owner-only):
 3. Secret: the same value as `PLANE_WEBHOOK_SECRET` in `.env`
 4. Enable the **Issue** events (created / updated / deleted) and save
 
+Full step-by-step (your side + the owner's side, verification and
+troubleshooting) is in [`deploy/WEBHOOK_SETUP.md`](deploy/WEBHOOK_SETUP.md).
+
 Every request is verified with `X-Plane-Signature` (HMAC-SHA256 of the raw body);
 unauthenticated calls get `403`. The server listens on `127.0.0.1:8080` — expose it
 through a TLS reverse proxy, e.g. the bundled Caddy config:
