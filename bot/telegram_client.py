@@ -77,10 +77,14 @@ class TelegramClient:
             pass
 
     # ── low-level ─────────────────────────────────────
-    def _api(self, method: str, max_retries: int = 3, **params) -> dict[str, Any]:
-        """Call the Bot API with 429 Retry-After + transient 5xx backoff."""
+    def _api(self, method: str, max_retries: int = 3, _timeout: float | None = None, **params) -> dict[str, Any]:
+        """Call the Bot API with 429 Retry-After + transient 5xx backoff.
+
+        _timeout overrides the client timeout for this call (used by
+        get_updates so the HTTP read timeout exceeds the long-poll timeout).
+        """
         url = f"https://api.telegram.org/bot{self.token}/{method}"
-        client_kw: dict[str, Any] = {"timeout": self.timeout}
+        client_kw: dict[str, Any] = {"timeout": _timeout or self.timeout}
         if self.proxy:
             client_kw["proxy"] = self.proxy
         if self._transport:
@@ -206,11 +210,18 @@ class TelegramClient:
 
     # ── polling ───────────────────────────────────────
     def get_updates(self, offset: int | None = None, timeout: int = 50) -> list[dict[str, Any]]:
+        """Long-poll getUpdates.
+
+        The HTTP client timeout must EXCEED the long-poll timeout, or the
+        connection dies mid-wait (read timeout) and the bot misses updates
+        (e.g. ⚡wake:plane channel posts) — the classic 40s-client/50s-poll
+        mismatch. The client timeout is set per-call here to 60s.
+        """
         params: dict[str, Any] = {
             "timeout": str(timeout),
             "allowed_updates": json.dumps(["message", "callback_query", "channel_post"]),
         }
         if offset is not None:
             params["offset"] = str(offset)
-        result = self._api("getUpdates", **params)
+        result = self._api("getUpdates", _timeout=60, **params)
         return result if isinstance(result, list) else []
