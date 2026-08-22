@@ -247,6 +247,21 @@ class App:
         if msg.get("message_id") and msg.get("chat", {}).get("id") == self.settings.tg_chat_id:
             self.tg.record_message(int(msg["message_id"]))
         text = msg.get("text", "")
+        # ⚡wake:plane — posted by the wake bot when the Vercel webhook fired.
+        # The channel is the always-on link: kick the poll loop NOW.
+        if text == "⚡wake:plane":
+            logger.info("webhook wake received — kicking poll loop")
+            try:
+                self.poll_loop.kick()
+            except Exception as exc:
+                logger.exception("wake kick failed: %s", exc)
+            # delete the wake marker so the channel stays clean
+            try:
+                if msg.get("message_id"):
+                    self.tg.delete_message(self.settings.tg_chat_id, msg["message_id"])
+            except TelegramError:
+                pass
+            return
         if text.startswith("/"):
             cmd = text.split()[0].lstrip("/").replace("-", "_")
             self._slash(cmd, update)

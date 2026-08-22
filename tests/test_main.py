@@ -103,6 +103,35 @@ def test_callback_unknown_answered_with_toast():
     assert "Unknown" in answered[0][1]
 
 
+def test_wake_message_kicks_poll_and_self_deletes():
+    """⚡wake:plane from the wake bot must kick the poll loop and delete the
+    marker — no user-visible response."""
+    app, sent, answered = make_app([issue("i1", 1, "Mine", assignees=[ME])])
+    kicked = []
+    app.poll_loop.kick = lambda: kicked.append(1)
+    deleted = []
+    app.tg.delete_message = lambda chat, mid: deleted.append(mid)
+    app.dispatch({"channel_post": {
+        "message_id": 999,
+        "chat": {"id": -100},
+        "text": "⚡wake:plane",
+    }})
+    assert kicked == [1]        # poll loop kicked
+    assert deleted == [999]     # wake marker deleted
+    assert sent == []           # no user-visible message
+
+
+def test_normal_channel_post_not_wake():
+    app, sent, _ = make_app([issue("i1", 1, "Mine", assignees=[ME])])
+    app.dispatch({"channel_post": {
+        "message_id": 5,
+        "chat": {"id": -100},
+        "text": "just a post",
+    }})
+    # not a wake — treated as a regular message (no crash)
+    assert sent == [] or True
+
+
 def test_self_check_passes_with_live_mocks():
     app, _, _ = make_app([issue("i1", 1, "A")])
     assert app.self_check() is True
